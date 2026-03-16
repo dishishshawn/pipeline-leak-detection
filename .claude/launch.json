@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Streamlit Dashboard",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": ["run", "dashboard/app.py"],
+      "port": 8501
+    }
+  ]
+}

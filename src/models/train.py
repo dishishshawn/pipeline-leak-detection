@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import joblib
@@ -10,6 +11,9 @@ from sklearn.model_selection import train_test_split
 from src.data.loader import load_and_prepare
 from src.features.engineer import build_features
 
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 TARGET_COLUMN = "target"
 
@@ -60,12 +64,9 @@ def evaluate_model(model, X_test, y_test, model_name: str):
     """
     predictions = model.predict(X_test)
 
-    print(f"\n=== {model_name} Evaluation ===")
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, predictions))
-
-    print("\nClassification Report:")
-    print(classification_report(y_test, predictions))
+    logger.info("=== %s Evaluation ===", model_name)
+    logger.info("Confusion Matrix:\n%s", confusion_matrix(y_test, predictions))
+    logger.info("Classification Report:\n%s", classification_report(y_test, predictions))
 
 
 def save_model(model, output_path: str):
@@ -75,7 +76,7 @@ def save_model(model, output_path: str):
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, output)
-    print(f"Model saved to: {output_path}")
+    logger.info("Model saved to: %s", output_path)
 
 
 def main():
@@ -90,8 +91,7 @@ def main():
     # Prepare training inputs
     X, y = prepare_training_data(df)
 
-    print("Feature columns used for training:")
-    print(X.columns.tolist())
+    logger.info("Feature columns: %s", X.columns.tolist())
 
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
