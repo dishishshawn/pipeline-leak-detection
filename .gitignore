@@ -6,3 +6,4 @@ _pycache__/
 .DS_Store
 data/raw/
 data/processed/
+.claude/

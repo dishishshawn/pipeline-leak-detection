@@ -21,12 +21,7 @@ def prepare_training_data(df: pd.DataFrame):
     df = df.copy()
 
     # Columns we do not want to use directly as model inputs
-    drop_cols = [
-        "timestamp",
-        "event_type",
-        "alarm_triggered",
-        TARGET_COLUMN,
-    ]
+    drop_cols = [col for col in df.columns if col not in ["temperature", "pressure", "flow_rate", TARGET_COLUMN]]
 
     feature_df = df.drop(columns=drop_cols, errors="ignore")
 
@@ -116,9 +111,10 @@ def main():
     evaluate_model(random_forest_model, X_test, y_test, "Random Forest")
 
     # Save models
-    save_model(logistic_model, "models/logistic_regression.joblib")
-    save_model(random_forest_model, "models/random_forest.joblib")
+    save_model(logistic_model, "models/trained/logistic_regression.joblib")
+    save_model(random_forest_model, "models/trained/random_forest.joblib")
 
 
+# python -m src.models.train
 if __name__ == "__main__":
     main()
