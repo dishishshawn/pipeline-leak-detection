@@ -1,4 +1,8 @@
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def add_pressure_delta(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,6 +99,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_rolling_flow_features(df, window=5)
     df = encode_event_type(df)
 
+    logger.info("Feature engineering complete. Shape: %s", df.shape)
     return df
 
 

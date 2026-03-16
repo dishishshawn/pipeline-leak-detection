@@ -1,5 +1,9 @@
+import logging
 from pathlib import Path
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 REQUIRED_COLUMNS = [
@@ -29,6 +33,7 @@ def load_csv(file_path: str) -> pd.DataFrame:
         raise FileNotFoundError(f"File not found: {file_path}")
 
     df = pd.read_csv(path)
+    logger.info("Loaded %d rows from %s", len(df), file_path)
     return df
 
 
@@ -39,7 +44,9 @@ def validate_schema(df: pd.DataFrame) -> None:
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
 
     if missing:
+        logger.error("Schema validation failed, missing columns: %s", missing)
         raise ValueError(f"Missing required columns: {missing}")
+    logger.debug("Schema validation passed")
 
 
 def basic_cleaning(df: pd.DataFrame) -> pd.DataFrame:
@@ -64,6 +71,7 @@ def basic_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     df = df.dropna(subset=important_cols)
+    logger.info("After cleaning: %d rows remain", len(df))
 
     return df
 
