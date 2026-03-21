@@ -1,0 +1,101 @@
+datasets:
+  scada_pipeline:
+    name: "SCADA Pipeline Operations Dataset"
+    source: kaggle
+    kaggle_path: "zara2099/scada-pipeline-operations-dataset"
+    local_raw: "data/raw/scada_pipeline"
+    local_processed: "data/processed/scada_pipeline"
+    direct_fit: true
+    phase: 1
+    task_type: binary_classification
+    column_map:
+      timestamp: timestamp
+      pressure: pressure
+      flow_rate: flow_rate
+      temperature: temperature
+      rpm: pump_speed
+      power: energy_consumption
+      status_label: event_type
+      leak_label: target
+    target: target
+    id_col: null
+    segment_col: segment_id
+    notes: "Simulated digital-twin SCADA data with normal/fault conditions"
+
+  water_leak:
+    name: "Water Leak Dataset"
+    source: kaggle
+    kaggle_path: "ziya07/water-leak-dataset"
+    local_raw: "data/raw/water_leak"
+    local_processed: "data/processed/water_leak"
+    direct_fit: true
+    phase: 1
+    task_type: binary_classification
+    column_map:
+      timestamp: Timestamp
+      pressure: "Pressure (bar)"
+      flow_rate: "Flow Rate (L/s)"
+      temperature: "Temperature (°C)"
+      sensor_id: Sensor_ID
+      leak_label: "Leak Status"
+    target: "Leak Status"
+    id_col: Sensor_ID
+    segment_col: null
+    notes: "Water pipeline leak/no-leak time-series with burst and anomaly fields"
+
+  smart_water_leak:
+    name: "Smart Water Leak Detection Dataset"
+    source: kaggle
+    kaggle_path: "talha97s/smart-water-leak-detection-dataset"
+    local_raw: "data/raw/smart_water_leak"
+    local_processed: "data/processed/smart_water_leak"
+    direct_fit: false
+    phase: 2
+    task_type: binary_classification
+    column_map:
+      pressure: pressure
+      flow_rate: flow_rate
+      temperature: temperature
+      vibration: vibration
+      rpm: rpm
+    target: null
+    id_col: null
+    segment_col: null
+    notes: "Simulated smart water network with geolocation — useful for transfer learning"
+
+  uci_hydraulic:
+    name: "Condition Monitoring of Hydraulic Systems"
+    source: uci
+    uci_url: "https://archive.ics.uci.edu/static/public/447/condition+monitoring+of+hydraulic+systems.zip"
+    local_raw: "data/raw/uci_hydraulic"
+    local_processed: "data/processed/uci_hydraulic"
+    direct_fit: false
+    phase: 2
+    task_type: cycle_classification
+    column_map:
+      pressure: PS1
+      flow_rate: FS1
+      temperature: TS1
+      vibration: VS1
+      power: EPS1
+    target: null  # from profile.txt — pump leakage column index 3
+    id_col: null
+    segment_col: null
+    notes: "Industrial multi-sensor cycle data; pump leakage severity is the leak proxy"
+
+  gas_pipeline_acoustic:
+    name: "High-Pressure Gas Pipeline Acoustic Dataset"
+    source: kaggle
+    kaggle_path: "ziya07/high-pressure-gas-pipeline-acoustic-dataset"
+    local_raw: "data/raw/gas_pipeline_acoustic"
+    local_processed: "data/processed/gas_pipeline_acoustic"
+    direct_fit: false
+    phase: 3
+    task_type: localization
+    column_map:
+      pressure: pressure_level
+      sensor_id: sensor_location
+    target: leak_position
+    id_col: null
+    segment_col: null
+    notes: "Acoustic leak localization — lower priority for first demo"

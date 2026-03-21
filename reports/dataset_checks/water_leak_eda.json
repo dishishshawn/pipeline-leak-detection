@@ -1,0 +1,51 @@
+{
+  "dataset": "water_leak",
+  "row_count": 1000,
+  "col_count": 13,
+  "columns": [
+    "Timestamp",
+    "Sensor_ID",
+    "Pressure (bar)",
+    "Flow Rate (L/s)",
+    "Temperature (\u00b0C)",
+    "Leak Status",
+    "Burst Status",
+    "timestamp",
+    "pressure",
+    "flow_rate",
+    "sensor_id",
+    "leak_label",
+    "dataset_name"
+  ],
+  "null_summary": {},
+  "numeric_stats": {
+    "pressure": {
+      "mean": 3.2207,
+      "std": 0.489,
+      "min": 0.911,
+      "max": 3.9954,
+      "nulls": 0
+    },
+    "flow_rate": {
+      "mean": 125.0381,
+      "std": 44.1214,
+      "min": 50.6545,
+      "max": 331.7541,
+      "nulls": 0
+    }
+  },
+  "label_distribution": {
+    "0": 981,
+    "1": 19
+  },
+  "timestamp_usable": true,
+  "labels_usable": true,
+  "dataset_verdict": "usable_small",
+  "timestamp_range": [
+    "2024-01-01 00:00:00",
+    "2024-01-04 11:15:00"
+  ],
+  "timestamp_unique": 1000,
+  "n_classes": 2,
+  "majority_class_pct": 0.981
+}

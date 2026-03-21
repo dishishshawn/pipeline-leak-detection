@@ -1,0 +1,109 @@
+{
+  "dataset": "scada_pipeline",
+  "target": "target",
+  "n_train": 800,
+  "n_test": 200,
+  "positive_rate_train": 0.3063,
+  "positive_rate_test": 0.305,
+  "models": {
+    "majority": {
+      "model": "majority",
+      "accuracy": 0.695,
+      "f1": 0.0,
+      "roc_auc": null,
+      "report": {
+        "0": {
+          "precision": 0.695,
+          "recall": 1.0,
+          "f1-score": 0.8200589970501475,
+          "support": 139.0
+        },
+        "1": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 61.0
+        },
+        "accuracy": 0.695,
+        "macro avg": {
+          "precision": 0.3475,
+          "recall": 0.5,
+          "f1-score": 0.41002949852507375,
+          "support": 200.0
+        },
+        "weighted avg": {
+          "precision": 0.4830249999999999,
+          "recall": 0.695,
+          "f1-score": 0.5699410029498525,
+          "support": 200.0
+        }
+      }
+    },
+    "logistic_regression": {
+      "model": "logistic_regression",
+      "accuracy": 0.76,
+      "f1": 0.6471,
+      "roc_auc": 0.8292,
+      "report": {
+        "0": {
+          "precision": 0.864,
+          "recall": 0.7769784172661871,
+          "f1-score": 0.8181818181818182,
+          "support": 139.0
+        },
+        "1": {
+          "precision": 0.5866666666666667,
+          "recall": 0.7213114754098361,
+          "f1-score": 0.6470588235294118,
+          "support": 61.0
+        },
+        "accuracy": 0.76,
+        "macro avg": {
+          "precision": 0.7253333333333334,
+          "recall": 0.7491449463380115,
+          "f1-score": 0.732620320855615,
+          "support": 200.0
+        },
+        "weighted avg": {
+          "precision": 0.7794133333333333,
+          "recall": 0.76,
+          "f1-score": 0.7659893048128343,
+          "support": 200.0
+        }
+      }
+    },
+    "random_forest": {
+      "model": "random_forest",
+      "accuracy": 0.94,
+      "f1": 0.8947,
+      "roc_auc": 0.9827,
+      "report": {
+        "0": {
+          "precision": 0.9319727891156463,
+          "recall": 0.9856115107913669,
+          "f1-score": 0.958041958041958,
+          "support": 139.0
+        },
+        "1": {
+          "precision": 0.9622641509433962,
+          "recall": 0.8360655737704918,
+          "f1-score": 0.8947368421052632,
+          "support": 61.0
+        },
+        "accuracy": 0.94,
+        "macro avg": {
+          "precision": 0.9471184700295212,
+          "recall": 0.9108385422809293,
+          "f1-score": 0.9263894000736106,
+          "support": 200.0
+        },
+        "weighted avg": {
+          "precision": 0.9412116544731102,
+          "recall": 0.94,
+          "f1-score": 0.938733897681266,
+          "support": 200.0
+        }
+      }
+    }
+  }
+}

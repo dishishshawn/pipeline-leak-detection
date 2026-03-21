@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterator
 import yaml
-
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
