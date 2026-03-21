@@ -33,7 +33,7 @@ st.set_page_config(
 # Helpers
 # ---------------------------------------------------------------------------
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
-MODEL_DIR = Path("models")
+MODEL_DIR = Path("models/advanced")
 
 
 @st.cache_data
@@ -230,7 +230,7 @@ with tab_eval:
                         color_continuous_scale="Blues",
                         labels={"color": "Count"},
                     )
-                    st.plotly_chart(fig_cm, use_container_width=True)
+                    st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{name}")
 
                 # ROC curve
                 if hasattr(mdl, "predict_proba"):
@@ -245,6 +245,6 @@ with tab_eval:
                         yaxis_title="True Positive Rate",
                         height=350,
                     )
-                    st.plotly_chart(fig_roc, use_container_width=True)
+                    st.plotly_chart(fig_roc, use_container_width=True, key=f"roc_{name}")
 
                 st.markdown("---")

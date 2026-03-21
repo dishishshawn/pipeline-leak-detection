@@ -7,3 +7,4 @@ _pycache__/
 data/raw/
 data/processed/
 .claude/
+.vscode/

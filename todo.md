@@ -64,11 +64,21 @@ Priority 4 — Stretch / Advanced
 File: notebooks/exploratory_analysis.ipynb
 Visualize class imbalance, feature distributions, correlation heatmap
 
-10. Additional ML Models
+10. Advanced Training Framework (NEW - HIGH PRIORITY)
+
+Implement scalable training pipeline for 300GB dataset:
+- Out-of-core processing with pandas chunking
+- XGBoost/LightGBM models for better performance on large data
+- Hyperparameter tuning with Optuna or scikit-learn
+- MLflow experiment tracking for hyperparameters, metrics, artifacts
+- Configurable training pipeline (YAML config files)
+- Cross-validation with memory-efficient chunking
+
+11. Additional ML Models (DEPRECATED - covered by #10)
 
 Isolation Forest for unsupervised anomaly detection (mentioned in README, not implemented)
-Optional: XGBoost for comparison
+Optional: XGBoost for comparison (now part of #10)
 
-11. Hyperparameter Tuning
+12. Hyperparameter Tuning (DEPRECATED - covered by #10)
 
-Add GridSearchCV or RandomizedSearchCV for Random Forest in train.py
+Add GridSearchCV or RandomizedSearchCV for Random Forest in train.py (now part of #10)

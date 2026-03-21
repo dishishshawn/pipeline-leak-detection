@@ -1,0 +1,69 @@
+# Advanced Training Configuration
+# Supports scalable training for large datasets
+
+# Data settings
+data:
+  path: "data/sample/scada_sample.csv"  # Path to training data
+  chunk_size: 100000  # Rows per chunk for out-of-core processing (set to null for in-memory)
+  sample_size: null    # Limit rows for testing (null = use all)
+
+# Feature engineering
+features:
+  enabled: true
+  window_sizes: [5, 10, 15]  # Rolling window sizes for time-series features
+
+# Model configurations
+models:
+  logistic_regression:
+    enabled: true
+    hyperparameters:
+      max_iter: 1000
+      C: [0.1, 1.0, 10.0]  # Values to try in tuning
+
+  random_forest:
+    enabled: true
+    hyperparameters:
+      n_estimators: [100, 200, 500]
+      max_depth: [10, 20, null]  # null = unlimited
+      min_samples_split: [2, 5, 10]
+
+  xgboost:
+    enabled: true
+    hyperparameters:
+      n_estimators: [100, 200, 500]
+      max_depth: [3, 6, 9]
+      learning_rate: [0.01, 0.1, 0.3]
+      subsample: [0.8, 1.0]
+
+  lightgbm:
+    enabled: true
+    hyperparameters:
+      n_estimators: [100, 200, 500]
+      max_depth: [10, 20, -1]  # -1 = unlimited
+      learning_rate: [0.01, 0.1, 0.3]
+      num_leaves: [31, 63, 127]
+
+# Training settings
+training:
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 5  # Cross-validation folds
+
+# Hyperparameter tuning
+tuning:
+  enabled: true
+  method: "optuna"  # "optuna" or "grid" or "random"
+  n_trials: 50  # For Optuna
+  n_iter: 20     # For RandomizedSearchCV
+
+# Experiment tracking
+tracking:
+  enabled: true
+  backend: "mlflow"  # "mlflow" or "wandb"
+  experiment_name: "pipeline_leak_detection"
+  tracking_uri: null  # null = use default
+
+# Output settings
+output:
+  model_dir: "models/advanced/"
+  log_level: "INFO"
