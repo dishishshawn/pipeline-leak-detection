@@ -33,22 +33,47 @@ st.set_page_config(
 # Helpers
 # ---------------------------------------------------------------------------
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
-MODEL_DIR = Path("models/advanced")
+MODEL_DIR = Path("models")
 
 
 @st.cache_data
-def load_data(path: str) -> pd.DataFrame:
-    df = load_and_prepare(path)
-    df = build_features(df)
+def load_data(path: str, dataset_type: str = "scada") -> pd.DataFrame:
+    if dataset_type == "scada":
+        df = load_and_prepare(path)
+        df = build_features(df)
+    else:
+        # For water leak dataset, use the dataset adapters
+        from src.data.dataset_adapters import normalize
+        from scripts.run_benchmark import make_features
+        df = normalize("water_leak")
+        # Apply the same feature engineering as the benchmark script
+        df = make_features(df, window=5)
+        # Add required columns that the dashboard expects
+        if "timestamp" not in df.columns:
+            df["timestamp"] = pd.date_range(start="2024-01-01", periods=len(df), freq="1min")
+        if "segment_id" not in df.columns:
+            df["segment_id"] = 1  # Default segment
+        if "alarm_triggered" not in df.columns:
+            df["alarm_triggered"] = 0
+        if "target" not in df.columns and "leak_label" in df.columns:
+            df["target"] = df["leak_label"]
     return df
 
 
 @st.cache_resource
-def load_models():
+def load_models(dataset_type: str = "scada"):
     models = {}
-    for model_file in MODEL_DIR.glob("*.joblib"):
-        label = model_file.stem.replace("_", " ").title()
-        models[label] = load_model(str(model_file))
+    if dataset_type == "scada":
+        # Load advanced models which use build_features
+        for model_file in (MODEL_DIR / "advanced").glob("*.joblib"):
+            label = model_file.stem.replace("_", " ").title()
+            models[label] = load_model(str(model_file))
+    else:
+        # Load water leak models from trained directory
+        for model_file in (MODEL_DIR / "trained").glob("water_leak_*.pkl"):
+            label = model_file.stem.replace("water_leak_", "").replace("_", " ").title()
+            models[f"Water Leak {label}"] = load_model(str(model_file))
+    
     return models
 
 
@@ -58,10 +83,28 @@ def load_models():
 st.sidebar.title("Pipeline Leak Detection")
 st.sidebar.markdown("---")
 
-data_path = st.sidebar.text_input("Data path", value=SAMPLE_DATA_PATH)
+# Dataset selection
+dataset_options = {
+    "SCADA Pipeline": "scada",
+    "Water Leak": "water_leak"
+}
+selected_dataset_name = st.sidebar.selectbox(
+    "Dataset Type", 
+    list(dataset_options.keys()),
+    index=0  # Default to SCADA
+)
+dataset_type = dataset_options[selected_dataset_name]
+
+# Update sample data path based on dataset
+if dataset_type == "scada":
+    default_data_path = "data/sample/scada_sample.csv"
+else:
+    default_data_path = "data/raw/water_leak/water_leak_detection_1000_rows.csv"
+
+data_path = st.sidebar.text_input("Data path", value=default_data_path)
 
 try:
-    df = load_data(data_path)
+    df = load_data(data_path, dataset_type)
 except Exception as e:
     st.error(f"Could not load data: {e}")
     st.stop()
@@ -92,7 +135,8 @@ if len(date_range) == 2:
 # Load models
 # ---------------------------------------------------------------------------
 try:
-    models = load_models()
+    models = load_models(dataset_type)
+    st.sidebar.success(f"Loaded {len(models)} models for {selected_dataset_name}")
 except Exception as e:
     st.warning(f"Could not load models: {e}")
     models = {}
@@ -100,6 +144,12 @@ except Exception as e:
 selected_model_name = st.sidebar.selectbox(
     "Active model", list(models.keys()) if models else ["No models found"]
 )
+
+# Show loaded models
+if models:
+    with st.sidebar.expander("Available Models"):
+        for name in models.keys():
+            st.write(f"• {name}")
 
 # ---------------------------------------------------------------------------
 # KPI row
