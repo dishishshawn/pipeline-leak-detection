@@ -45,6 +45,16 @@ logger = logging.getLogger(__name__)
 TARGET_COLUMN = "target"
 
 
+def _infer_dataset_name_from_path(path: str) -> str | None:
+    """Infer dataset name (e.g., 'scada_pipeline' or 'water_leak') from data path."""
+    path_lower = path.lower()
+    if "scada" in path_lower:
+        return "scada_pipeline"
+    if "water" in path_lower:
+        return "water_leak"
+    return None
+
+
 def prepare_training_data(df: pd.DataFrame):
     """
     Build feature matrix X and target vector y.
@@ -96,15 +106,23 @@ def evaluate_model(model, X_test, y_test, model_name: str):
     logger.info("Classification Report:\n%s", classification_report(y_test, predictions))
 
 
-def save_model(model, output_path: str):
+def save_model(model, output_path: str, dataset_name: str | None = None):
     """
     Save trained model to disk.
     """
     output = Path(output_path)
+    # Extract model name, removing dataset prefix if present
+    model_name = output.stem
+    for prefix in ("scada_pipeline_", "water_leak_"):
+        if model_name.startswith(prefix):
+            model_name = model_name[len(prefix):]
+            break
+    
     saved_path = save_model_artifact(
         model=model,
         model_dir=output.parent,
-        model_name=output.stem,
+        model_name=model_name,
+        dataset_name=dataset_name,
         extension=output.suffix or ".joblib",
     )
     logger.info("Model saved to: %s", saved_path)
@@ -266,12 +284,15 @@ def advanced_train(config_path: str):
         model = train_lightgbm(X_train, y_train)
         trained_models["lightgbm"] = model
 
-    # Save models
+    # Save models with dataset prefix
     model_dir = Path(config["output"]["model_dir"])
     model_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Infer dataset name from data path for consistent naming
+    dataset_name = _infer_dataset_name_from_path(config["data"]["path"])
 
     for name, model in trained_models.items():
-        save_model(model, str(model_dir / f"{name}.joblib"))
+        save_model(model, str(model_dir / f"{name}.joblib"), dataset_name=dataset_name)
 
         # Log to experiment tracking
         if config["tracking"]["enabled"] and MLFLOW_AVAILABLE:
@@ -284,7 +305,7 @@ def advanced_train(config_path: str):
 
 
 def main():
-    data_path = "data/raw/scada_pipeline.csv"
+    data_path = "data/sample/scada_sample.csv"
 
     # Load data
     df = load_and_prepare(data_path)
@@ -314,9 +335,12 @@ def main():
     evaluate_model(logistic_model, X_test, y_test, "Logistic Regression")
     evaluate_model(random_forest_model, X_test, y_test, "Random Forest")
 
-    # Save models
-    save_model(logistic_model, "models/trained/logistic_regression.joblib")
-    save_model(random_forest_model, "models/trained/random_forest.joblib")
+    # Infer dataset name from data path
+    dataset_name = _infer_dataset_name_from_path(data_path)
+    
+    # Save models with dataset prefix
+    save_model(logistic_model, "models/trained/logistic_regression.joblib", dataset_name=dataset_name)
+    save_model(random_forest_model, "models/trained/random_forest.joblib", dataset_name=dataset_name)
 
 
 # python -m src.models.train
