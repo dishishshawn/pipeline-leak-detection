@@ -12,7 +12,18 @@ def load_model(path: str):
     model_path = Path(path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {path}")
-    return joblib.load(model_path)
+    model = joblib.load(model_path)
+
+    if isinstance(model, tuple) and len(model) == 2:
+        scaler, clf = model
+        if type(clf).__name__ == "LogisticRegression" and not hasattr(clf, "multi_class"):
+            clf.multi_class = "auto"
+        return scaler, clf
+
+    if type(model).__name__ == "LogisticRegression" and not hasattr(model, "multi_class"):
+        model.multi_class = "auto"
+
+    return model
 
 
 def predict(model, df: pd.DataFrame) -> np.ndarray:
