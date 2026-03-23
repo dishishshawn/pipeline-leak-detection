@@ -8,7 +8,6 @@ from pathlib import Path
 # Allow imports from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import joblib
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,6 +15,7 @@ import streamlit as st
 
 from src.data.loader import load_and_prepare
 from src.features.engineer import build_features
+from src.models.artifacts import discover_model_artifacts
 from src.models.evaluate import classification_report_df, confusion_matrix_df, roc_auc
 from src.models.predict import load_model, predict, predict_leak_score
 from src.models.train import prepare_training_data
@@ -63,17 +63,8 @@ def load_data(path: str, dataset_type: str = "scada") -> pd.DataFrame:
 @st.cache_resource
 def load_models(dataset_type: str = "scada"):
     models = {}
-    if dataset_type == "scada":
-        # Load advanced models which use build_features
-        for model_file in (MODEL_DIR / "advanced").glob("*.joblib"):
-            label = model_file.stem.replace("_", " ").title()
-            models[label] = load_model(str(model_file))
-    else:
-        # Load water leak models from trained directory
-        for model_file in (MODEL_DIR / "trained").glob("water_leak_*.pkl"):
-            label = model_file.stem.replace("water_leak_", "").replace("_", " ").title()
-            models[f"Water Leak {label}"] = load_model(str(model_file))
-    
+    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
+        models[label] = load_model(artifact.path)
     return models
 
 
