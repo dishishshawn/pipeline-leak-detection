@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterator
 import yaml
-import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -37,6 +36,7 @@ except ImportError:
 
 from src.data.loader import load_and_prepare
 from src.features.engineer import build_features
+from src.models.artifacts import save_model_artifact
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -101,9 +101,13 @@ def save_model(model, output_path: str):
     Save trained model to disk.
     """
     output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, output)
-    logger.info("Model saved to: %s", output_path)
+    saved_path = save_model_artifact(
+        model=model,
+        model_dir=output.parent,
+        model_name=output.stem,
+        extension=output.suffix or ".joblib",
+    )
+    logger.info("Model saved to: %s", saved_path)
 
 
 # Advanced Training Framework
@@ -267,8 +271,7 @@ def advanced_train(config_path: str):
     model_dir.mkdir(parents=True, exist_ok=True)
 
     for name, model in trained_models.items():
-        model_path = model_dir / f"{name}.joblib"
-        save_model(model, str(model_path))
+        save_model(model, str(model_dir / f"{name}.joblib"))
 
         # Log to experiment tracking
         if config["tracking"]["enabled"] and MLFLOW_AVAILABLE:

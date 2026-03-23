@@ -6,7 +6,7 @@ Features: mean/std/delta/rolling stats on pressure, flow_rate, temperature.
 Outputs:
   reports/dataset_checks/<name>_benchmark.json
   reports/dataset_checks/<name>_benchmark.md
-  models/trained/<name>_<model>.pkl
+  models/trained/<name>_<model>.joblib
 
 Run:
   python scripts/run_benchmark.py
@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import pickle
 import sys
 from pathlib import Path
 from typing import Optional
@@ -40,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.dataset_adapters import normalize, save_processed
 from src.data.dataset_registry import get_dataset, is_downloaded
+from src.models.artifacts import save_model_artifact
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -253,9 +253,12 @@ def run_benchmark(name: str, window: int = 5):
     # Save model artifacts
     for model_name, obj in model_objects.items():
         if obj is not None:
-            pkl_path = MODELS_DIR / f"{name}_{model_name}.pkl"
-            with open(pkl_path, "wb") as f:
-                pickle.dump(obj, f)
+            save_model_artifact(
+                model=obj,
+                model_dir=MODELS_DIR,
+                model_name=model_name,
+                dataset_name=name,
+            )
 
     # Save features
     feat_df = X.copy()

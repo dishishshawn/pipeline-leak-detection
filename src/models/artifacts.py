@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import joblib
+
 
 @dataclass(frozen=True)
 class ModelArtifact:
@@ -11,6 +13,42 @@ class ModelArtifact:
     dataset_type: str
     source: str
     priority: int
+
+
+def build_model_artifact_path(
+    model_dir: str | Path,
+    model_name: str,
+    dataset_name: str | None = None,
+    extension: str = ".joblib",
+) -> Path:
+    """
+    Build a standardized artifact path for a trained model.
+    """
+    root = Path(model_dir)
+    suffix = extension if extension.startswith(".") else f".{extension}"
+    stem = f"{dataset_name}_{model_name}" if dataset_name else model_name
+    return root / f"{stem}{suffix}"
+
+
+def save_model_artifact(
+    model,
+    model_dir: str | Path,
+    model_name: str,
+    dataset_name: str | None = None,
+    extension: str = ".joblib",
+) -> str:
+    """
+    Save a model artifact using the repo-standard serialization format.
+    """
+    output_path = build_model_artifact_path(
+        model_dir=model_dir,
+        model_name=model_name,
+        dataset_name=dataset_name,
+        extension=extension,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, output_path)
+    return str(output_path)
 
 
 def _normalize_label(stem: str) -> str:
@@ -38,11 +76,13 @@ def _artifact_priority(path: Path) -> int:
     stem = path.stem
     if path.parent.name == "advanced":
         return 0
-    if stem.startswith(("scada_pipeline_", "water_leak_")):
+    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
         return 1
-    if path.parent.name == "trained":
+    if stem.startswith(("scada_pipeline_", "water_leak_")):
         return 2
-    return 3
+    if path.parent.name == "trained":
+        return 3
+    return 4
 
 
 def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[str, ModelArtifact]:
@@ -51,9 +91,10 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
 
     Priority order:
     1. models/advanced/*.joblib
-    2. dataset-specific models/trained/<dataset>_*.pkl
-    3. models/trained/*.joblib
-    4. models/*.joblib
+    2. dataset-specific models/trained/<dataset>_*.joblib
+    3. dataset-specific models/trained/<dataset>_*.pkl
+    4. models/trained/*.joblib
+    5. models/*.joblib
     """
     root = Path(model_dir)
     candidates = sorted(root.glob("*.joblib"))
