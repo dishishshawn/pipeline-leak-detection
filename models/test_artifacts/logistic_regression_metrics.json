@@ -1,0 +1,113 @@
+{
+  "model_name": "logistic_regression",
+  "dataset_name": "scada_sample",
+  "dataset_version": {
+    "dataset_file": "scada_sample.csv",
+    "file_hash": "00403f8f5cb013586d49cdccbc1541b4941461108e7e13327aa0cc9c68fea9ca",
+    "file_size_bytes": 36612,
+    "num_rows": 100,
+    "num_columns": 17,
+    "column_names": [
+      "segment_id",
+      "pressure",
+      "flow_rate",
+      "temperature",
+      "valve_status",
+      "pump_state",
+      "pump_speed",
+      "compressor_state",
+      "energy_consumption",
+      "pressure_delta",
+      "flow_rate_delta",
+      "pressure_roll_mean",
+      "pressure_roll_std",
+      "flow_roll_mean",
+      "flow_roll_std",
+      "event_type_encoded",
+      "target"
+    ],
+    "dtypes": {
+      "segment_id": "int64",
+      "pressure": "float64",
+      "flow_rate": "float64",
+      "temperature": "float64",
+      "valve_status": "int64",
+      "pump_state": "int64",
+      "pump_speed": "float64",
+      "compressor_state": "int64",
+      "energy_consumption": "float64",
+      "pressure_delta": "float64",
+      "flow_rate_delta": "float64",
+      "pressure_roll_mean": "float64",
+      "pressure_roll_std": "float64",
+      "flow_roll_mean": "float64",
+      "flow_roll_std": "float64",
+      "event_type_encoded": "int8",
+      "target": "int64"
+    },
+    "memory_usage_mb": 0.013065338134765625,
+    "missing_values": {
+      "segment_id": 0,
+      "pressure": 0,
+      "flow_rate": 0,
+      "temperature": 0,
+      "valve_status": 0,
+      "pump_state": 0,
+      "pump_speed": 0,
+      "compressor_state": 0,
+      "energy_consumption": 0,
+      "pressure_delta": 0,
+      "flow_rate_delta": 0,
+      "pressure_roll_mean": 0,
+      "pressure_roll_std": 0,
+      "flow_roll_mean": 0,
+      "flow_roll_std": 0,
+      "event_type_encoded": 0,
+      "target": 0
+    }
+  },
+  "metrics": {
+    "accuracy": 0.99,
+    "precision": 0.9901086956521739,
+    "recall": 0.99,
+    "f1_score": 0.9897332047573127,
+    "roc_auc": 1.0
+  },
+  "confusion_matrix": [
+    [
+      91,
+      0
+    ],
+    [
+      1,
+      8
+    ]
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 0.9891304347826086,
+      "recall": 1.0,
+      "f1-score": 0.994535519125683,
+      "support": 91.0
+    },
+    "1": {
+      "precision": 1.0,
+      "recall": 0.8888888888888888,
+      "f1-score": 0.9411764705882353,
+      "support": 9.0
+    },
+    "accuracy": 0.99,
+    "macro avg": {
+      "precision": 0.9945652173913043,
+      "recall": 0.9444444444444444,
+      "f1-score": 0.9678559948569592,
+      "support": 100.0
+    },
+    "weighted avg": {
+      "precision": 0.9901086956521739,
+      "recall": 0.99,
+      "f1-score": 0.9897332047573127,
+      "support": 100.0
+    }
+  }
+}

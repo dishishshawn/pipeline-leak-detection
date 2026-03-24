@@ -38,49 +38,54 @@ This system is designed for **scalability and production-readiness**, supporting
 # Repository Structure
 
 ```
-
 pipeline-leak-detection/
-│
 ├── config/
-│   └── training_config.yaml    # Advanced training configuration
-│
+│   ├── datasets.yaml
+│   └── training_config.yaml
 ├── data/
-│   ├── raw/                    # downloaded datasets (not tracked by git)
-│   ├── processed/              # cleaned datasets
-│   └── sample/                 # small demo datasets
-│
+│   ├── raw/
+│   │   ├── scada_pipeline/
+│   │   │   └── scada_pipeline.csv
+│   │   └── water_leak/
+│   │       └── water_leak_detection_1000_rows.csv
+│   ├── processed/
+│   │   ├── scada_pipeline/
+│   │   └── water_leak/
+│   └── sample/
+│       └── scada_sample.csv
 ├── models/
-│   ├── trained/                # basic trained models
-│   └── advanced/               # advanced trained models
-│
+│   ├── logistic_regression.joblib
+│   ├── random_forest.joblib
+│   ├── advanced/
+│   │   ├── logistic_regression.joblib
+│   │   └── random_forest.joblib
+│   └── trained/
+│       ├── logistic_regression.joblib
+│       └── random_forest.joblib
+├── reports/
+│   └── dataset_checks/
 ├── scripts/
-│   └── train_advanced.py       # advanced training runner
-│
+│   ├── download_data.py
+│   ├── run_benchmark.py
+│   ├── run_eda.py
+│   └── train_advanced.py
 ├── src/
 │   ├── data/
-│   │   ├── loader.py
-│   │   └── preprocessor.py
-│   │
+│   │   ├── dataset_adapters.py
+│   │   ├── dataset_registry.py
+│   │   └── loader.py
 │   ├── features/
 │   │   └── engineer.py
-│   │
-│   ├── models/
-│   │   ├── train.py
-│   │   ├── predict.py
-│   │   └── evaluate.py
-│   │
-│   └── utils/
-│
+│   └── models/
+│       ├── artifacts.py
+│       ├── evaluate.py
+│       ├── predict.py
+│       └── train.py
 ├── dashboard/
-│   └── app.py                  # Streamlit monitoring dashboard
-│
-├── notebooks/
-│   └── exploratory_analysis.ipynb
-│
+│   └── app.py
 ├── requirements.txt
 ├── README.md
 └── .gitignore
-
 ```
 
 ---

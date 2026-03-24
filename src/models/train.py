@@ -37,6 +37,11 @@ except ImportError:
 from src.data.loader import load_and_prepare
 from src.features.engineer import build_features
 from src.models.artifacts import save_model_artifact
+from src.models.metrics import (
+    compute_classification_metrics,
+    get_dataset_version_info,
+    log_training_run,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -294,12 +299,39 @@ def advanced_train(config_path: str):
     for name, model in trained_models.items():
         save_model(model, str(model_dir / f"{name}.joblib"), dataset_name=dataset_name)
 
-        # Log to experiment tracking
+        # Log to experiment tracking with comprehensive metrics
         if config["tracking"]["enabled"] and MLFLOW_AVAILABLE:
             with mlflow.start_run(run_name=f"{name}_training"):
-                # Log basic info - expand as needed
-                mlflow.log_param("model_type", name)
-                mlflow.sklearn.log_model(model, name)
+                # Compute metrics on train and test sets
+                y_train_pred = model.predict(X_train)
+                y_test_pred = model.predict(X_test)
+                
+                # Get prediction probabilities if available
+                y_train_score = None
+                y_test_score = None
+                try:
+                    y_train_score = model.predict_proba(X_train)
+                    y_test_score = model.predict_proba(X_test)
+                except AttributeError:
+                    logger.debug(f"Model {name} does not support predict_proba")
+                
+                train_metrics = compute_classification_metrics(y_train, y_train_pred, y_train_score)
+                test_metrics = compute_classification_metrics(y_test, y_test_pred, y_test_score)
+                
+                # Log comprehensive training run with dataset versioning
+                log_training_run(
+                    model=model,
+                    model_name=name,
+                    dataset_name=dataset_name,
+                    file_path=config["data"]["path"],
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_test=X_test,
+                    y_test=y_test,
+                    train_metrics=train_metrics,
+                    test_metrics=test_metrics,
+                    output_dir=model_dir,
+                )
 
     logger.info("Advanced training completed. Models saved to: %s", model_dir)
 
