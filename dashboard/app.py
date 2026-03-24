@@ -90,6 +90,7 @@ def simulator_signature(
     step_minutes: int,
     history_limit: int,
     seed: int,
+    steps_per_refresh: int,
 ) -> tuple:
     return (
         preset_key,
@@ -98,6 +99,7 @@ def simulator_signature(
         int(step_minutes),
         int(history_limit),
         int(seed),
+        int(steps_per_refresh),
     )
 
 
@@ -165,6 +167,66 @@ def score_live_history(history: pd.DataFrame, model):
         result_df["leak_score"] = predict_leak_score(model, X_live).round(3)
 
     return featured, result_df
+
+
+def ideal_detection_markers(history: pd.DataFrame) -> pd.DataFrame:
+    marker_columns = [
+        "segment_id",
+        "timestamp",
+        "pressure",
+        "flow_rate",
+        "event_type",
+        "target",
+        "marker_label",
+    ]
+    if history.empty or "scenario_context" not in history.columns:
+        return pd.DataFrame(columns=marker_columns)
+
+    leak_context = history["scenario_context"].fillna("").str.contains("leak_progression")
+    actionable_state = history["target"].eq(1) | history["event_type"].isin(["warning", "fault"])
+    candidate_rows = history[leak_context & actionable_state].copy()
+    if candidate_rows.empty:
+        return pd.DataFrame(columns=marker_columns)
+
+    markers = (
+        candidate_rows.sort_values(["segment_id", "timestamp"])
+        .groupby("segment_id", as_index=False)
+        .first()[["segment_id", "timestamp", "pressure", "flow_rate", "event_type", "target"]]
+    )
+    markers["marker_label"] = "Ideal detection"
+    return markers[marker_columns]
+
+
+def add_ideal_detection_overlay(
+    figure: go.Figure,
+    markers: pd.DataFrame,
+    *,
+    y_column: str,
+    chart_name: str,
+) -> None:
+    if markers.empty or y_column not in markers.columns:
+        return
+
+    for marker in markers.itertuples(index=False):
+        figure.add_vline(
+            x=marker.timestamp,
+            line_dash="dot",
+            line_color="#d62728",
+            opacity=0.65,
+        )
+
+    figure.add_trace(
+        go.Scatter(
+            x=markers["timestamp"],
+            y=markers[y_column],
+            mode="markers+text",
+            marker=dict(size=11, color="#d62728", symbol="diamond"),
+            text=[f"Ideal detection S{segment_id}" for segment_id in markers["segment_id"]],
+            textposition="top center",
+            name=f"{chart_name} ideal detection",
+            hovertemplate="Segment %{text}<br>Time=%{x}<br>Value=%{y:.3f}<extra></extra>",
+        )
+    )
 
 
 def render_historical_tabs(
@@ -319,7 +381,7 @@ def render_historical_tabs(
                     st.markdown("---")
 
 
-def render_live_view(live_models: dict, selected_live_model: str) -> None:
+def render_live_view(live_models: dict, selected_live_model: str, steps_per_refresh: int) -> None:
     simulator = st.session_state.get("live_simulator")
     running = st.session_state.get("live_running", False)
 
@@ -328,7 +390,7 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
         return
 
     if running:
-        sync_live_history(simulator.advance())
+        sync_live_history(simulator.advance_steps(steps_per_refresh))
 
     history = st.session_state["live_history"]
     if history.empty:
@@ -337,6 +399,7 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
 
     model = live_models.get(selected_live_model) if live_models else None
     _, scored = score_live_history(history, model) if model is not None else (history, pd.DataFrame())
+    markers = ideal_detection_markers(history)
 
     latest_timestamp = history["timestamp"].max()
     latest_rows = history[history["timestamp"] == latest_timestamp].sort_values("segment_id")
@@ -355,6 +418,8 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
     if not latest_scored.empty and "leak_score" in latest_scored.columns:
         high_risk_segments = int((latest_scored["leak_score"] >= 0.5).sum())
         st.caption(f"High-risk segments by model score >= 0.50: {high_risk_segments}")
+    if not markers.empty:
+        st.caption("Red markers show the idealized earliest point where a strong model should begin flagging the leak.")
 
     chart_col1, chart_col2 = st.columns(2)
     with chart_col1:
@@ -366,6 +431,7 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
             labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_id": "Segment"},
             title="Live pressure telemetry",
         )
+        add_ideal_detection_overlay(fig_pressure, markers, y_column="pressure", chart_name="Pressure")
         st.plotly_chart(fig_pressure, use_container_width=True)
 
     with chart_col2:
@@ -377,6 +443,7 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
             labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_id": "Segment"},
             title="Live flow telemetry",
         )
+        add_ideal_detection_overlay(fig_flow, markers, y_column="flow_rate", chart_name="Flow")
         st.plotly_chart(fig_flow, use_container_width=True)
 
     if not scored.empty and "leak_score" in scored.columns:
@@ -389,6 +456,19 @@ def render_live_view(live_models: dict, selected_live_model: str) -> None:
             title=f"Model leak score ({selected_live_model})",
         )
         fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="alert threshold")
+        if not markers.empty:
+            score_markers = markers[["segment_id", "timestamp"]].copy()
+            score_values = (
+                scored.sort_values(["segment_id", "timestamp"])
+                .merge(score_markers, on=["segment_id", "timestamp"], how="inner")
+            )
+            if not score_values.empty:
+                add_ideal_detection_overlay(
+                    fig_score,
+                    score_values.assign(marker_label="Ideal detection"),
+                    y_column="leak_score",
+                    chart_name="Leak score",
+                )
         st.plotly_chart(fig_score, use_container_width=True)
 
     table_col1, table_col2 = st.columns(2)
@@ -550,6 +630,7 @@ with live_tab:
 
     with control_col2:
         tick_seconds = st.slider("Real seconds per tick", min_value=1, max_value=5, value=1, key="live_tick_seconds")
+        steps_per_refresh = st.slider("Simulation speed", min_value=1, max_value=20, value=5, help="How many simulator ticks to advance on each dashboard refresh.", key="live_steps_per_refresh")
         history_limit = st.slider("History per segment", min_value=120, max_value=1440, value=360, step=60, key="live_history_limit")
         seed = st.number_input("Random seed", min_value=1, max_value=999999, value=42, step=1, key="live_seed")
 
@@ -572,6 +653,7 @@ with live_tab:
         step_minutes,
         history_limit,
         int(seed),
+        steps_per_refresh,
     )
 
     button_col1, button_col2, button_col3 = st.columns(3)
@@ -618,10 +700,10 @@ with live_tab:
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")
         def _live_fragment() -> None:
-            render_live_view(live_models, selected_live_model)
+            render_live_view(live_models, selected_live_model, steps_per_refresh)
 
         _live_fragment()
     else:
         if st.session_state.get("live_running") and not hasattr(st, "fragment"):
             st.info("Your Streamlit build does not expose `st.fragment`, so use the page rerun to refresh live telemetry.")
-        render_live_view(live_models, selected_live_model)
+        render_live_view(live_models, selected_live_model, steps_per_refresh)

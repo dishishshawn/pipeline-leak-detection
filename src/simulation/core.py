@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import math
 import random
@@ -171,6 +171,23 @@ class PipelineTelemetrySimulator:
         while self._next_tick_wall is not None and now >= self._next_tick_wall:
             emitted_rows.extend(self._emit_step())
             self._next_tick_wall += timedelta(seconds=self.config.tick_seconds)
+
+        if emitted_rows:
+            self._history.extend(emitted_rows)
+        return pd.DataFrame(emitted_rows)
+
+    def advance_steps(self, steps: int) -> pd.DataFrame:
+        if not self._running or steps <= 0:
+            return pd.DataFrame()
+
+        emitted_rows: list[dict] = []
+        for _ in range(steps):
+            emitted_rows.extend(self._emit_step())
+
+        if self._next_tick_wall is None:
+            self._next_tick_wall = datetime.now() + timedelta(seconds=self.config.tick_seconds)
+        else:
+            self._next_tick_wall += timedelta(seconds=self.config.tick_seconds * steps)
 
         if emitted_rows:
             self._history.extend(emitted_rows)
