@@ -1,7 +1,14 @@
 import pytest
 import numpy as np
 import pandas as pd
-from src.models.predict import load_model, predict, predict_proba, predict_leak_score
+from src.models.predict import (
+    load_model,
+    predict,
+    predict_proba,
+    predict_leak_score,
+    supports_leak_score,
+    supports_probability_scores,
+)
 
 
 LR_PATH = "models/logistic_regression.joblib"
@@ -63,3 +70,75 @@ def test_leak_score_between_zero_and_one():
     scores = predict_leak_score(model, X)
     assert scores.min() >= 0.0
     assert scores.max() <= 1.0
+
+
+class IdentityScaler:
+    def __init__(self):
+        self.seen = None
+
+    def transform(self, df):
+        self.seen = df.copy()
+        return df.to_numpy() + 1.0
+
+
+class ThresholdClassifier:
+    classes_ = np.array([0, 1])
+
+    def predict(self, X):
+        return (np.asarray(X)[:, 0] > 1.5).astype(int)
+
+
+class DecisionFunctionClassifier(ThresholdClassifier):
+    def decision_function(self, X):
+        return np.asarray(X)[:, 0] - 1.5
+
+
+class ScoreSamplesClassifier(ThresholdClassifier):
+    def score_samples(self, X):
+        return np.asarray(X)[:, 0]
+
+
+class PredictOnlyClassifier:
+    def predict(self, X):
+        return np.array([0, 1, 1])
+
+
+def test_predict_handles_legacy_tuple_model():
+    model = (IdentityScaler(), ThresholdClassifier())
+    X = pd.DataFrame({"a": [0.0, 1.0, 2.0]})
+    preds = predict(model, X)
+    np.testing.assert_array_equal(preds, np.array([0, 1, 1]))
+
+
+def test_predict_proba_uses_decision_function_when_available():
+    model = DecisionFunctionClassifier()
+    X = pd.DataFrame({"a": [0.0, 1.5, 3.0]})
+    proba = predict_proba(model, X)
+    assert proba.shape == (3, 2)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-6)
+    assert proba[0, 1] < 0.5
+    assert proba[2, 1] > 0.5
+
+
+def test_predict_leak_score_uses_score_samples_for_anomaly_models():
+    model = ScoreSamplesClassifier()
+    X = pd.DataFrame({"a": [3.0, 2.0, 1.0]})
+    scores = predict_leak_score(model, X)
+    assert scores.shape == (3,)
+    assert scores[0] < scores[-1]
+    assert scores.min() >= 0.0
+    assert scores.max() <= 1.0
+
+
+def test_predict_proba_falls_back_to_hard_predictions():
+    model = PredictOnlyClassifier()
+    X = pd.DataFrame({"a": [0.0, 1.0, 2.0]})
+    proba = predict_proba(model, X)
+    expected = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]])
+    np.testing.assert_allclose(proba, expected)
+
+
+def test_support_helpers_distinguish_native_scores_from_fallbacks():
+    assert supports_probability_scores((IdentityScaler(), DecisionFunctionClassifier()))
+    assert not supports_probability_scores(PredictOnlyClassifier())
+    assert supports_leak_score(PredictOnlyClassifier())

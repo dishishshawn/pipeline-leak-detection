@@ -17,7 +17,13 @@ from src.data.loader import load_and_prepare
 from src.features.engineer import build_features
 from src.models.artifacts import discover_model_artifacts
 from src.models.evaluate import classification_report_df, confusion_matrix_df, roc_auc
-from src.models.predict import load_model, predict, predict_leak_score
+from src.models.predict import (
+    load_model,
+    predict,
+    predict_leak_score,
+    supports_leak_score,
+    supports_probability_scores,
+)
 from src.models.train import prepare_training_data
 
 # ---------------------------------------------------------------------------
@@ -216,28 +222,35 @@ with tab_pred:
         if X.empty:
             st.warning("No feature data available after filtering.")
         else:
-            scores = predict_leak_score(model, X)
             preds = predict(model, X)
 
             result_df = filtered[["timestamp", "segment_id", "pressure", "flow_rate", "target"]].copy()
-            result_df = result_df.iloc[: len(scores)].copy()
-            result_df["leak_score"] = scores.round(3)
+            result_df = result_df.iloc[: len(preds)].copy()
             result_df["predicted"] = preds
 
-            st.subheader("Leak probability scores")
-            fig_score = px.line(
-                result_df.sort_values("timestamp"),
-                x="timestamp",
-                y="leak_score",
-                color="segment_id",
-                labels={"leak_score": "Leak probability", "timestamp": "Time"},
-            )
-            fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="threshold")
-            st.plotly_chart(fig_score, use_container_width=True)
+            if supports_leak_score(model):
+                scores = predict_leak_score(model, X)
+                result_df["leak_score"] = scores.round(3)
+
+                st.subheader("Leak probability scores")
+                fig_score = px.line(
+                    result_df.sort_values("timestamp"),
+                    x="timestamp",
+                    y="leak_score",
+                    color="segment_id",
+                    labels={"leak_score": "Leak probability", "timestamp": "Time"},
+                )
+                fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="threshold")
+                st.plotly_chart(fig_score, use_container_width=True)
+            else:
+                st.info("This model only produces class predictions, so leak scores are unavailable.")
 
             st.subheader("Prediction detail")
             st.dataframe(
-                result_df.sort_values("leak_score", ascending=False).head(50),
+                result_df.sort_values(
+                    "leak_score" if "leak_score" in result_df.columns else "predicted",
+                    ascending=False,
+                ).head(50),
                 use_container_width=True,
             )
 
@@ -274,7 +287,7 @@ with tab_eval:
                     st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{name}")
 
                 # ROC curve
-                if hasattr(mdl, "predict_proba"):
+                if supports_probability_scores(mdl):
                     scores = predict_leak_score(mdl, X_all)
                     fpr, tpr, auc_score = roc_auc(y_all, scores)
                     fig_roc = go.Figure()
