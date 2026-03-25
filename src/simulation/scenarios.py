@@ -159,6 +159,14 @@ class ScenarioPreset:
     factory: Callable[[Sequence[int]], list[Scenario]]
 
 
+@dataclass(frozen=True)
+class ManualLeakPreset:
+    key: str
+    label: str
+    description: str
+    factory: Callable[[int, int], list[Scenario]]
+
+
 def _primary_segment(segment_ids: Sequence[int]) -> int:
     return segment_ids[len(segment_ids) // 2]
 
@@ -214,11 +222,79 @@ def build_scenarios(preset_key: str, segment_ids: Sequence[int]) -> list[Scenari
     return preset_map[preset_key].factory(segment_ids)
 
 
+def get_manual_leak_presets() -> tuple[ManualLeakPreset, ...]:
+    return (
+        ManualLeakPreset(
+            key="slow_seep_manual",
+            label="Slow Seep",
+            description="Gradual leak growth with an earlier warning phase before alarms.",
+            factory=lambda start_step, segment_id: [
+                LeakProgressionScenario(
+                    start_step=start_step,
+                    ramp_steps=14,
+                    hold_steps=18,
+                    recovery_steps=8,
+                    max_severity=1.0,
+                    affected_segments=[segment_id],
+                )
+            ],
+        ),
+        ManualLeakPreset(
+            key="rupture_manual",
+            label="Fast Rupture",
+            description="A fast, high-severity leak event that should trigger a rapid score jump.",
+            factory=lambda start_step, segment_id: [
+                LeakProgressionScenario(
+                    start_step=start_step,
+                    ramp_steps=4,
+                    hold_steps=14,
+                    recovery_steps=8,
+                    max_severity=1.35,
+                    affected_segments=[segment_id],
+                )
+            ],
+        ),
+        ManualLeakPreset(
+            key="pump_assisted_leak_manual",
+            label="Pump-Assisted Leak",
+            description="Pump degradation appears first, then transitions into a leak on the same segment.",
+            factory=lambda start_step, segment_id: [
+                PumpWearScenario(
+                    start_step=start_step,
+                    ramp_steps=6,
+                    hold_steps=12,
+                    recovery_steps=6,
+                    intensity=1.0,
+                    affected_segments=[segment_id],
+                ),
+                LeakProgressionScenario(
+                    start_step=start_step + 5,
+                    ramp_steps=10,
+                    hold_steps=18,
+                    recovery_steps=8,
+                    max_severity=1.0,
+                    affected_segments=[segment_id],
+                ),
+            ],
+        ),
+    )
+
+
+def build_manual_leak_scenarios(preset_key: str, *, start_step: int, segment_id: int) -> list[Scenario]:
+    preset_map = {preset.key: preset for preset in get_manual_leak_presets()}
+    if preset_key not in preset_map:
+        raise KeyError(f"Unknown manual leak preset: {preset_key}")
+    return preset_map[preset_key].factory(start_step, segment_id)
+
+
 __all__ = [
     "DemandSpikeScenario",
     "LeakProgressionScenario",
+    "ManualLeakPreset",
     "PumpWearScenario",
     "ScenarioPreset",
+    "build_manual_leak_scenarios",
     "build_scenarios",
+    "get_manual_leak_presets",
     "get_scenario_presets",
 ]

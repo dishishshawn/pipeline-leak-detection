@@ -9,15 +9,19 @@ from src.simulation.core import (
 from src.simulation.scenarios import (
     DemandSpikeScenario,
     LeakProgressionScenario,
+    ManualLeakPreset,
     PumpWearScenario,
     ScenarioPreset,
+    build_manual_leak_scenarios,
     build_scenarios,
+    get_manual_leak_presets,
     get_scenario_presets,
 )
 
 __all__ = [
     "DemandSpikeScenario",
     "LeakProgressionScenario",
+    "ManualLeakPreset",
     "PipelineTelemetrySimulator",
     "PumpWearScenario",
     "ScenarioPreset",
@@ -25,7 +29,9 @@ __all__ = [
     "SegmentState",
     "SimulationConfig",
     "SimulationContext",
+    "build_manual_leak_scenarios",
     "build_scenarios",
+    "get_manual_leak_presets",
     "get_scenario_presets",
     "make_default_profiles",
 ]

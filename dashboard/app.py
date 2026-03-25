@@ -22,6 +22,7 @@ from src.features.engineer import build_features
 from src.models.artifacts import discover_model_artifacts
 from src.models.evaluate import classification_report_df, confusion_matrix_df, roc_auc
 from src.models.predict import (
+    expected_feature_columns,
     load_model,
     predict,
     predict_leak_score,
@@ -32,7 +33,9 @@ from src.models.train import prepare_training_data
 from src.simulation import (
     PipelineTelemetrySimulator,
     SimulationConfig,
+    build_manual_leak_scenarios,
     build_scenarios,
+    get_manual_leak_presets,
     get_scenario_presets,
     make_default_profiles,
 )
@@ -46,6 +49,18 @@ st.set_page_config(
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
 MODEL_DIR = Path("models")
 LIVE_MODEL_DATASET = "scada"
+LIVE_SCORE_LOOKBACK = 5
+LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
+SEGMENT_PALETTE = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+]
 
 
 @st.cache_data
@@ -76,11 +91,46 @@ def load_models(dataset_type: str = "scada"):
     return models
 
 
+@st.cache_resource
+def load_live_models(dataset_type: str = "scada"):
+    models = {}
+    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
+        if Path(artifact.path).parent.name != "realtime":
+            continue
+        models[label] = load_model(artifact.path)
+    return models
+
+
+def with_segment_labels(df: pd.DataFrame) -> pd.DataFrame:
+    labeled = df.copy()
+    labeled["segment_label"] = labeled["segment_id"].astype(str)
+    return labeled
+
+
+def segment_plot_args(df: pd.DataFrame) -> dict:
+    if df.empty or "segment_id" not in df.columns:
+        return {}
+
+    segment_ids = sorted(df["segment_id"].dropna().unique().tolist())
+    labels = [str(segment_id) for segment_id in segment_ids]
+    color_map = {
+        str(segment_id): SEGMENT_PALETTE[index % len(SEGMENT_PALETTE)]
+        for index, segment_id in enumerate(segment_ids)
+    }
+    return {
+        "color": "segment_label",
+        "category_orders": {"segment_label": labels},
+        "color_discrete_map": color_map,
+    }
+
+
 def ensure_live_state() -> None:
     st.session_state.setdefault("live_simulator", None)
     st.session_state.setdefault("live_history", pd.DataFrame())
     st.session_state.setdefault("live_running", False)
     st.session_state.setdefault("live_signature", None)
+    st.session_state.setdefault("live_scored_history", pd.DataFrame())
+    st.session_state.setdefault("live_scored_model", None)
 
 
 def simulator_signature(
@@ -124,6 +174,21 @@ def build_live_simulator(
     return PipelineTelemetrySimulator(config=config, scenarios=scenarios)
 
 
+def inject_manual_leak(simulator: PipelineTelemetrySimulator, preset_key: str, segment_id: int) -> None:
+    start_step = simulator.step_index
+    for scenario in build_manual_leak_scenarios(
+        preset_key,
+        start_step=start_step,
+        segment_id=segment_id,
+    ):
+        simulator.add_scenario(scenario)
+
+
+def clear_live_score_cache() -> None:
+    st.session_state["live_scored_history"] = pd.DataFrame()
+    st.session_state["live_scored_model"] = None
+
+
 def sync_live_history(new_rows: pd.DataFrame) -> None:
     if new_rows.empty:
         return
@@ -143,10 +208,19 @@ def score_live_history(history: pd.DataFrame, model):
     if history.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    featured = build_features(history.copy())
-    X_live, _ = prepare_training_data(featured)
+    display_df = history.copy()
+    scoring_df = history.drop(
+        columns=["event_type", "target", "alarm_triggered", "scenario_context"],
+        errors="ignore",
+    ).copy()
+    featured = build_features(scoring_df)
+    exclude_cols = {"timestamp", "alarm_triggered"}
+    X_live = featured.select_dtypes(include=["number"]).drop(columns=exclude_cols, errors="ignore")
+    feature_columns = expected_feature_columns(model) if model is not None else None
+    if feature_columns:
+        X_live = X_live.reindex(columns=list(feature_columns), fill_value=0.0)
     if X_live.empty:
-        return featured, pd.DataFrame()
+        return display_df, pd.DataFrame()
 
     result_columns = [
         "timestamp",
@@ -159,14 +233,104 @@ def score_live_history(history: pd.DataFrame, model):
         "target",
         "scenario_context",
     ]
-    available_columns = [column for column in result_columns if column in featured.columns]
-    result_df = featured[available_columns].copy()
+    available_columns = [column for column in result_columns if column in display_df.columns]
+    result_df = display_df[available_columns].copy()
     result_df["predicted"] = predict(model, X_live)
 
     if supports_leak_score(model):
         result_df["leak_score"] = predict_leak_score(model, X_live).round(3)
 
-    return featured, result_df
+    return display_df, result_df
+
+
+def score_live_history_incremental(
+    history: pd.DataFrame,
+    model,
+    model_name: str,
+) -> pd.DataFrame:
+    if history.empty or model is None:
+        clear_live_score_cache()
+        return pd.DataFrame()
+
+    cached_model = st.session_state.get("live_scored_model")
+    cached_scores = st.session_state.get("live_scored_history", pd.DataFrame())
+
+    if (
+        cached_model != model_name
+        or cached_scores.empty
+        or any(column not in cached_scores.columns for column in LIVE_SCORE_KEY_COLUMNS)
+    ):
+        _, rescored = score_live_history(history, model)
+        st.session_state["live_scored_history"] = rescored.copy()
+        st.session_state["live_scored_model"] = model_name
+        return rescored
+
+    current_keys = history[LIVE_SCORE_KEY_COLUMNS].drop_duplicates()
+    cached_scores = cached_scores.merge(current_keys, on=LIVE_SCORE_KEY_COLUMNS, how="inner")
+
+    new_rows = history.merge(
+        cached_scores[LIVE_SCORE_KEY_COLUMNS].drop_duplicates(),
+        on=LIVE_SCORE_KEY_COLUMNS,
+        how="left",
+        indicator=True,
+    )
+    new_rows = new_rows[new_rows["_merge"] == "left_only"].drop(columns="_merge")
+
+    if new_rows.empty:
+        st.session_state["live_scored_history"] = cached_scores
+        st.session_state["live_scored_model"] = model_name
+        return cached_scores
+
+    sorted_history = history.sort_values(["segment_id", "timestamp"]).reset_index(drop=True)
+    scored_parts = [cached_scores]
+
+    for segment_id in sorted(new_rows["segment_id"].dropna().unique().tolist()):
+        segment_history = (
+            sorted_history[sorted_history["segment_id"] == segment_id]
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
+        segment_new = (
+            new_rows[new_rows["segment_id"] == segment_id]
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
+        if segment_history.empty or segment_new.empty:
+            continue
+
+        earliest_new_ts = segment_new["timestamp"].min()
+        earliest_new_positions = segment_history.index[segment_history["timestamp"] == earliest_new_ts].tolist()
+        if not earliest_new_positions:
+            continue
+
+        start_idx = max(0, earliest_new_positions[0] - LIVE_SCORE_LOOKBACK)
+        scoring_window = segment_history.iloc[start_idx:].copy()
+        _, scored_window = score_live_history(scoring_window, model)
+        if scored_window.empty:
+            continue
+
+        scored_new = scored_window.merge(
+            segment_new[LIVE_SCORE_KEY_COLUMNS].drop_duplicates(),
+            on=LIVE_SCORE_KEY_COLUMNS,
+            how="inner",
+        )
+        if not scored_new.empty:
+            scored_parts.append(scored_new)
+
+    updated_scores = (
+        pd.concat(scored_parts, ignore_index=True)
+        .drop_duplicates(subset=LIVE_SCORE_KEY_COLUMNS, keep="last")
+        .merge(current_keys, on=LIVE_SCORE_KEY_COLUMNS, how="inner")
+        .sort_values(["segment_id", "timestamp"])
+        .reset_index(drop=True)
+    )
+
+    if len(updated_scores) != len(current_keys):
+        _, updated_scores = score_live_history(history, model)
+
+    st.session_state["live_scored_history"] = updated_scores.copy()
+    st.session_state["live_scored_model"] = model_name
+    return updated_scores
 
 
 def ideal_detection_markers(history: pd.DataFrame) -> pd.DataFrame:
@@ -234,6 +398,7 @@ def render_historical_tabs(
     models: dict,
     selected_model_name: str,
 ) -> None:
+    filtered_labeled = with_segment_labels(filtered)
     tab_ts, tab_pred, tab_eval = st.tabs(
         ["Time-series", "Predictions", "Model comparison"]
     )
@@ -241,26 +406,26 @@ def render_historical_tabs(
     with tab_ts:
         st.subheader("Pressure over time")
         fig_pressure = px.line(
-            filtered.sort_values("timestamp"),
+            filtered_labeled.sort_values("timestamp"),
             x="timestamp",
             y="pressure",
-            color="segment_id",
-            labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_id": "Segment"},
+            labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
+            **segment_plot_args(filtered_labeled),
         )
         st.plotly_chart(fig_pressure, use_container_width=True)
 
         st.subheader("Flow rate over time")
         fig_flow = px.line(
-            filtered.sort_values("timestamp"),
+            filtered_labeled.sort_values("timestamp"),
             x="timestamp",
             y="flow_rate",
-            color="segment_id",
-            labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_id": "Segment"},
+            labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
+            **segment_plot_args(filtered_labeled),
         )
         st.plotly_chart(fig_flow, use_container_width=True)
 
         st.subheader("Leak events")
-        leak_df = filtered[filtered["target"] == 1]
+        leak_df = filtered_labeled[filtered_labeled["target"] == 1]
         if leak_df.empty:
             st.info("No leak events in the selected range.")
         else:
@@ -268,10 +433,10 @@ def render_historical_tabs(
                 leak_df,
                 x="timestamp",
                 y="pressure",
-                color="segment_id",
                 symbol_sequence=["x"],
-                labels={"pressure": "Pressure (bar)", "timestamp": "Time"},
+                labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
                 title="Pressure at leak events",
+                **segment_plot_args(leak_df),
             )
             st.plotly_chart(fig_leaks, use_container_width=True)
 
@@ -297,12 +462,13 @@ def render_historical_tabs(
                     result_df["leak_score"] = scores.round(3)
 
                     st.subheader("Leak probability scores")
+                    result_labeled = with_segment_labels(result_df)
                     fig_score = px.line(
-                        result_df.sort_values("timestamp"),
+                        result_labeled.sort_values("timestamp"),
                         x="timestamp",
                         y="leak_score",
-                        color="segment_id",
-                        labels={"leak_score": "Leak probability", "timestamp": "Time"},
+                        labels={"leak_score": "Leak probability", "timestamp": "Time", "segment_label": "Segment"},
+                        **segment_plot_args(result_labeled),
                     )
                     fig_score.add_hline(
                         y=0.5,
@@ -397,8 +563,14 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         st.info("Simulator is configured but no telemetry has been emitted yet.")
         return
 
+    history_labeled = with_segment_labels(history)
     model = live_models.get(selected_live_model) if live_models else None
-    _, scored = score_live_history(history, model) if model is not None else (history, pd.DataFrame())
+    scored = (
+        score_live_history_incremental(history, model, selected_live_model)
+        if model is not None
+        else pd.DataFrame()
+    )
+    scored_labeled = with_segment_labels(scored) if not scored.empty else scored
     markers = ideal_detection_markers(history)
 
     latest_timestamp = history["timestamp"].max()
@@ -424,36 +596,36 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     chart_col1, chart_col2 = st.columns(2)
     with chart_col1:
         fig_pressure = px.line(
-            history.sort_values("timestamp"),
+            history_labeled.sort_values("timestamp"),
             x="timestamp",
             y="pressure",
-            color="segment_id",
-            labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_id": "Segment"},
+            labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
             title="Live pressure telemetry",
+            **segment_plot_args(history_labeled),
         )
         add_ideal_detection_overlay(fig_pressure, markers, y_column="pressure", chart_name="Pressure")
         st.plotly_chart(fig_pressure, use_container_width=True)
 
     with chart_col2:
         fig_flow = px.line(
-            history.sort_values("timestamp"),
+            history_labeled.sort_values("timestamp"),
             x="timestamp",
             y="flow_rate",
-            color="segment_id",
-            labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_id": "Segment"},
+            labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
             title="Live flow telemetry",
+            **segment_plot_args(history_labeled),
         )
         add_ideal_detection_overlay(fig_flow, markers, y_column="flow_rate", chart_name="Flow")
         st.plotly_chart(fig_flow, use_container_width=True)
 
     if not scored.empty and "leak_score" in scored.columns:
         fig_score = px.line(
-            scored.sort_values("timestamp"),
+            scored_labeled.sort_values("timestamp"),
             x="timestamp",
             y="leak_score",
-            color="segment_id",
-            labels={"leak_score": "Leak score", "timestamp": "Time", "segment_id": "Segment"},
+            labels={"leak_score": "Leak score", "timestamp": "Time", "segment_label": "Segment"},
             title=f"Model leak score ({selected_live_model})",
+            **segment_plot_args(scored_labeled),
         )
         fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="alert threshold")
         if not markers.empty:
@@ -613,9 +785,11 @@ with live_tab:
         "This simulator emits SCADA-style telemetry in real time, keeps state per segment, and applies modular incident scenarios."
     )
 
-    live_models = load_models(LIVE_MODEL_DATASET)
+    live_models = load_live_models(LIVE_MODEL_DATASET)
     preset_definitions = get_scenario_presets()
     preset_map = {preset.key: preset for preset in preset_definitions}
+    manual_leak_presets = get_manual_leak_presets()
+    manual_leak_map = {preset.label: preset for preset in manual_leak_presets}
 
     control_col1, control_col2, control_col3 = st.columns(3)
     with control_col1:
@@ -637,9 +811,10 @@ with live_tab:
     with control_col3:
         selected_live_model = st.selectbox(
             "Scoring model",
-            options=list(live_models.keys()) if live_models else ["No SCADA models found"],
+            options=list(live_models.keys()) if live_models else ["No realtime models found"],
             key="live_model_name",
         )
+        st.caption("Live simulator scoring is limited to realtime-safe models from models/realtime.")
         st.markdown("**Preset description**")
         selected_preset_key = next(
             preset.key for preset in preset_definitions if preset.label == preset_label
@@ -671,6 +846,7 @@ with live_tab:
             st.session_state["live_simulator"] = simulator
             st.session_state["live_history"] = pd.DataFrame()
             st.session_state["live_signature"] = signature
+            clear_live_score_cache()
         simulator.start()
         st.session_state["live_running"] = True
 
@@ -692,10 +868,50 @@ with live_tab:
         st.session_state["live_simulator"] = simulator
         st.session_state["live_history"] = pd.DataFrame()
         st.session_state["live_signature"] = signature
+        clear_live_score_cache()
         simulator.start()
         st.session_state["live_running"] = True
 
     st.markdown("---")
+
+    st.markdown("**Manual Leak Trigger**")
+    simulator_for_trigger = st.session_state.get("live_simulator")
+    trigger_segment_options = (
+        simulator_for_trigger.segment_ids
+        if simulator_for_trigger is not None
+        else list(range(1, segment_count + 1))
+    )
+    trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
+    with trigger_col1:
+        trigger_label = st.selectbox(
+            "Leak type",
+            options=[preset.label for preset in manual_leak_presets],
+            key="manual_leak_type",
+        )
+        st.caption(manual_leak_map[trigger_label].description)
+    with trigger_col2:
+        trigger_segment = st.selectbox(
+            "Target segment",
+            options=trigger_segment_options,
+            key="manual_leak_segment",
+        )
+    with trigger_col3:
+        trigger_now = st.button("Start Leak Now", use_container_width=True)
+
+    if trigger_now:
+        simulator = st.session_state.get("live_simulator")
+        if simulator is None:
+            st.warning("Start the simulator before injecting a live leak event.")
+        else:
+            inject_manual_leak(
+                simulator,
+                manual_leak_map[trigger_label].key,
+                int(trigger_segment),
+            )
+            if not st.session_state.get("live_running"):
+                simulator.start()
+                st.session_state["live_running"] = True
+            st.success(f"Injected {trigger_label} on segment {trigger_segment}.")
 
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")

@@ -65,6 +65,8 @@ def _infer_dataset_type(path: Path) -> str | None:
         return "water_leak"
     if stem.startswith("scada_pipeline_"):
         return "scada"
+    if path.parent.name == "realtime":
+        return "scada"
     if path.parent.name == "advanced":
         return "scada"
     if stem in {"logistic_regression", "random_forest"}:
@@ -74,15 +76,17 @@ def _infer_dataset_type(path: Path) -> str | None:
 
 def _artifact_priority(path: Path) -> int:
     stem = path.stem
-    if path.parent.name == "advanced":
+    if path.parent.name == "realtime":
         return 0
-    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
+    if path.parent.name == "advanced":
         return 1
-    if stem.startswith(("scada_pipeline_", "water_leak_")):
+    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
         return 2
-    if path.parent.name == "trained":
+    if stem.startswith(("scada_pipeline_", "water_leak_")):
         return 3
-    return 4
+    if path.parent.name == "trained":
+        return 4
+    return 5
 
 
 def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[str, ModelArtifact]:
@@ -90,17 +94,19 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
     Discover dashboard-loadable artifacts and choose one best artifact per model label.
 
     Priority order:
-    1. models/advanced/*.joblib
-    2. dataset-specific models/trained/<dataset>_*.joblib
-    3. dataset-specific models/trained/<dataset>_*.pkl
-    4. models/trained/*.joblib
-    5. models/*.joblib
+    1. models/realtime/*.joblib
+    2. models/advanced/*.joblib
+    3. dataset-specific models/trained/<dataset>_*.joblib
+    4. dataset-specific models/trained/<dataset>_*.pkl
+    5. models/trained/*.joblib
+    6. models/*.joblib
     """
     root = Path(model_dir)
     candidates = sorted(root.glob("*.joblib"))
     candidates += sorted((root / "trained").glob("*.joblib"))
     candidates += sorted((root / "trained").glob("*.pkl"))
     candidates += sorted((root / "advanced").glob("*.joblib"))
+    candidates += sorted((root / "realtime").glob("*.joblib"))
 
     selected: dict[str, ModelArtifact] = {}
     for path in candidates:

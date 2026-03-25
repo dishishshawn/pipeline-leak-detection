@@ -1,47 +1,42 @@
 # Pipeline Leak Detection System
 
-AI-based pipeline monitoring system that detects leaks and abnormal pipeline behavior using SCADA sensor data and machine learning. Features a scalable training framework designed to handle datasets from small prototypes to large-scale industrial deployments.
+Pipeline leak detection and monitoring project built around SCADA-style sensor data, supervised ML models, anomaly detection, and a Streamlit dashboard with a live simulator.
 
-This project combines traditional ML approaches with advanced algorithms, experiment tracking, and a monitoring dashboard for comprehensive pipeline leak detection.
+The repository now supports three complementary workflows:
+- offline benchmarking and evaluation on stored datasets
+- advanced model training with XGBoost/LightGBM and experiment tracking hooks
+- realtime-oriented training plus a live simulator for stress-testing models against synthetic incidents
 
----
+## Project Goals
 
-# Project Goals
+- analyze pipeline telemetry with time-series feature engineering
+- detect leaks with multiple model families, not just one classifier
+- compare supervised and anomaly-based approaches side by side
+- simulate live operational incidents for dashboard-based testing
+- keep training paths configurable so newer data can replace current datasets later
 
-- Analyze pipeline SCADA data with time-series feature engineering
-- Detect leaks using multiple ML algorithms (traditional + advanced)
-- Compare model performance with comprehensive evaluation metrics
-- Provide scalable training pipeline for datasets of any size
-- Enable experiment tracking and hyperparameter optimization
-- Deliver real-time monitoring dashboard for visualization
-
-This system is designed for **scalability and production-readiness**, supporting everything from prototype demonstrations to large-scale industrial deployments.
-
----
-
-# Technology Stack
+## Technology Stack
 
 | Component | Technology |
-|--------|--------|
+| --- | --- |
 | Language | Python 3.8+ |
 | Data Processing | pandas, numpy |
-| Machine Learning | scikit-learn, XGBoost, LightGBM |
-| Hyperparameter Tuning | Optuna |
-| Experiment Tracking | MLflow |
-| Visualization | Plotly |
+| ML | scikit-learn, XGBoost, LightGBM |
+| Tracking / Tuning | MLflow, Optuna |
 | Dashboard | Streamlit |
+| Visualization | Plotly |
 | Configuration | YAML |
-| Version Control | Git + GitHub |
 
----
+## Repository Structure
 
-# Repository Structure
-
-```
+```text
 pipeline-leak-detection/
 ├── config/
 │   ├── datasets.yaml
+│   ├── realtime_training.yaml
 │   └── training_config.yaml
+├── dashboard/
+│   └── app.py
 ├── data/
 │   ├── raw/
 │   │   ├── scada_pipeline/
@@ -49,250 +44,209 @@ pipeline-leak-detection/
 │   │   └── water_leak/
 │   │       └── water_leak_detection_1000_rows.csv
 │   ├── processed/
-│   │   ├── scada_pipeline/
-│   │   └── water_leak/
 │   └── sample/
 │       └── scada_sample.csv
 ├── models/
-│   ├── logistic_regression.joblib
-│   ├── random_forest.joblib
 │   ├── advanced/
-│   │   ├── logistic_regression.joblib
-│   │   └── random_forest.joblib
-│   └── trained/
-│       ├── logistic_regression.joblib
-│       └── random_forest.joblib
+│   ├── realtime/
+│   ├── trained/
+│   └── ...
 ├── reports/
 │   └── dataset_checks/
 ├── scripts/
 │   ├── download_data.py
 │   ├── run_benchmark.py
 │   ├── run_eda.py
-│   └── train_advanced.py
+│   ├── train_advanced.py
+│   └── train_realtime_models.py
 ├── src/
 │   ├── data/
-│   │   ├── dataset_adapters.py
-│   │   ├── dataset_registry.py
-│   │   └── loader.py
 │   ├── features/
-│   │   └── engineer.py
-│   └── models/
-│       ├── artifacts.py
-│       ├── evaluate.py
-│       ├── predict.py
-│       └── train.py
-├── dashboard/
-│   └── app.py
-├── requirements.txt
-├── README.md
-└── .gitignore
+│   ├── models/
+│   │   ├── artifacts.py
+│   │   ├── predict.py
+│   │   ├── realtime.py
+│   │   ├── realtime_train.py
+│   │   └── train.py
+│   └── simulation/
+│       ├── core.py
+│       └── scenarios.py
+└── tests/
 ```
 
----
+## Setup
 
-# Setup Instructions
-
-### 1. Clone the repository
-
-```
-
-git clone https://github.com/dishishshawn/pipeline-leak-detection
-cd pipeline-leak-detection
-
-```
-
----
-
-### 2. Create a virtual environment
+### 1. Create a virtual environment
 
 Windows:
 
+```powershell
+python -m venv venv
+venv\Scripts\activate
 ```
 
-python -m venv .venv
-.venv\Scripts\activate
+macOS / Linux:
 
+```bash
+python3 -m venv venv
+source venv/bin/activate
 ```
 
-Mac / Linux:
+### 2. Install dependencies
 
-```
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-```
-
----
-
-### 3. Install dependencies
-
-```
-
+```bash
 pip install -r requirements.txt
-
 ```
 
----
+## Data
 
-# Dataset
+Included data sources:
 
-The project includes sample SCADA pipeline data for immediate testing and demonstration.
+- `data/sample/scada_sample.csv`: small SCADA sample for quick local checks
+- `data/raw/scada_pipeline/scada_pipeline.csv`: alternate raw SCADA dataset retained for dataset exploration
+- `data/raw/water_leak/water_leak_detection_1000_rows.csv`: alternate water leak dataset used by the benchmark/dashboard path
 
-**Sample Dataset** (included):
-- Location: `data/sample/scada_sample.csv`
-- Size: ~500 rows for quick testing
-- Features: pressure, flow rate, temperature, valve/pump states, event types
-- Ready to use for dashboard demonstrations
+The training code is config-driven, so replacing `data.path` in the YAML configs is the intended way to retrain on newer, higher-quality datasets later.
 
-**Full Dataset** (for large-scale training):
-- Source: Kaggle SCADA pipeline operations dataset
-- Expected size: 300GB+ for comprehensive model training
-- Download using Kaggle CLI:
+## Core Pipeline
 
-```
+### 1. Data Loading
 
-pip install kaggle
-kaggle datasets download -d zara2099/scada-pipeline-operations-dataset -p data/raw --unzip
+[`src/data/loader.py`](src/data/loader.py) handles the SCADA-schema path:
+- file loading
+- required-column validation
+- duplicate removal
+- timestamp parsing
+- dropping rows with missing critical values
 
-```
-
-The training framework is designed to handle datasets of any size through chunked processing and out-of-core learning.
-
----
-
-# Machine Learning Pipeline
-
-The system features both basic and advanced ML workflows with comprehensive experiment tracking.
-
-### 1. Data Loading & Preprocessing
-- Load SCADA CSV files with schema validation
-- Handle missing values and invalid readings
-- Normalize timestamps and categorical features
-- Support for chunked processing of large datasets
+[`src/data/dataset_registry.py`](src/data/dataset_registry.py) and [`src/data/dataset_adapters.py`](src/data/dataset_adapters.py) provide a more general dataset-mapping layer for non-SCADA sources.
 
 ### 2. Feature Engineering
-Advanced time-series feature engineering including:
 
-- Pressure/flow rate deltas and rolling statistics
-- Rolling means and standard deviations
-- Event type encoding
-- Compressor, pump, and valve state features
+[`src/features/engineer.py`](src/features/engineer.py) builds the current feature set:
+- pressure delta
+- flow-rate delta
+- rolling pressure mean/std
+- rolling flow mean/std
+- encoded event type
 
-### 3. Model Training
+### 3. Prediction Compatibility
 
-**Basic Models:**
-- Logistic Regression
-- Random Forest
+[`src/models/predict.py`](src/models/predict.py) provides a compatibility layer so the dashboard can score:
+- standard sklearn classifiers
+- tuple artifacts like `(scaler, estimator)`
+- anomaly-style models using `score_samples`
+- ensemble wrappers that expose `predict_proba`
 
-**Advanced Models (scalable for large datasets):**
-- XGBoost - Gradient boosting for superior performance
-- LightGBM - Microsoft's high-performance gradient boosting
-- Hyperparameter optimization with Optuna
-- Experiment tracking with MLflow
+## Training Workflows
 
-**Training Modes:**
-- **Basic Training:** `python -m src.models.train`
-- **Advanced Training:** `python scripts/train_advanced.py`
+### Basic Training
 
-### 4. Model Evaluation & Comparison
+Baseline logistic regression and random forest:
 
-Comprehensive evaluation metrics:
-- Precision, Recall, F1-Score
-- Confusion Matrix
-- ROC Curves and AUC
-- Cross-validation results
-
-Models are compared side-by-side in the dashboard with interactive visualizations.
-
-### 5. Experiment Tracking
-
-- MLflow integration for logging hyperparameters, metrics, and artifacts
-- Optuna for automated hyperparameter optimization
-- YAML-based configuration for reproducible experiments
-- Support for distributed training and large-scale evaluation
-
----
-
-# Dashboard
-
-Interactive Streamlit dashboard for real-time pipeline monitoring and ML model evaluation.
-
-**Features:**
-- **Time-series Visualization:** Pressure, flow rate, and temperature plots with segment filtering
-- **Leak Detection:** Real-time anomaly scoring and prediction visualization
-- **Model Comparison:** Side-by-side evaluation of all trained models with metrics and ROC curves
-- **Interactive Filters:** Date range and segment selection for focused analysis
-
-**Launch Command:**
 ```bash
-streamlit run dashboard/app.py
-```
-
-The dashboard automatically loads the most advanced trained models and provides comprehensive monitoring capabilities.
-
----
-
-# Advanced Training Configuration
-
-The system includes a scalable training framework configured via `config/training_config.yaml`:
-
-```yaml
-# Example configuration
-data:
-  path: "data/sample/scada_sample.csv"
-  chunk_size: 100000  # For large datasets
-
-models:
-  xgboost:
-    enabled: true
-    hyperparameters:
-      n_estimators: [100, 200, 500]
-      max_depth: [3, 6, 9]
-
-training:
-  cv_folds: 5
-  random_state: 42
-
-tuning:
-  enabled: true
-  method: "optuna"
-  n_trials: 50
-```
-
-**Key Features:**
-- **Scalable Processing:** Chunked data loading for datasets larger than RAM
-- **Model Selection:** Enable/disable different algorithms based on dataset size
-- **Hyperparameter Optimization:** Automated tuning with Optuna
-- **Experiment Tracking:** MLflow integration for reproducible research
-- **Configuration-Driven:** Easy to modify training parameters without code changes
-
----
-
-# Usage Examples
-
-### Quick Start (Sample Data)
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run basic training
 python -m src.models.train
+```
 
-# Launch dashboard
+Artifacts are saved under `models/trained/`.
+
+### Advanced Training
+
+Configurable advanced training with optional MLflow, XGBoost, and LightGBM:
+
+```bash
+python scripts/train_advanced.py
+```
+
+Configuration lives in `config/training_config.yaml`.
+
+Artifacts are saved under `models/advanced/`.
+
+### Realtime Training
+
+Realtime-oriented SCADA models intended for live simulator scoring:
+
+```powershell
+venv\Scripts\python.exe scripts\train_realtime_models.py
+```
+
+or with an explicit config:
+
+```powershell
+venv\Scripts\python.exe scripts\train_realtime_models.py --config config\realtime_training.yaml
+```
+
+Configuration lives in `config/realtime_training.yaml`.
+
+By default this trains on `data/sample/scada_sample.csv` and saves artifacts under `models/realtime/`.
+
+Current realtime model set:
+- `realtime_random_forest`
+- `realtime_xgboost`
+- `realtime_lightgbm`
+- `realtime_isolation_forest`
+- `realtime_hybrid_ensemble`
+
+The hybrid ensemble combines multiple model families into one scoring artifact so you can compare a blended signal against single-model behavior in the dashboard.
+
+## Dashboard
+
+Launch the app with:
+
+```bash
 streamlit run dashboard/app.py
 ```
 
-### Advanced Training (Large Dataset)
-```bash
-# Configure training in config/training_config.yaml
-# Enable XGBoost, set chunk_size, configure MLflow
+The dashboard has two primary surfaces:
 
-# Run advanced training
-python scripts/train_advanced.py
+### Historical Analysis
 
-# View experiments in MLflow UI
-mlflow ui
-```
+- filter stored datasets by segment and date
+- inspect pressure / flow time series
+- run prediction views on stored data
+- compare loaded models with confusion matrices and ROC curves
 
-This system is designed for **scalability and production-readiness**, supporting everything from prototype demonstrations to large-scale industrial deployments.
+### Live Simulator
+
+- start, pause, and restart a realtime telemetry stream
+- choose scenario preset, segment count, tick speed, history size, and scoring model
+- simulate incidents against SCADA-shaped live data
+- overlay ideal detection markers showing where a strong model should start reacting
+
+The simulator is implemented in:
+- `src/simulation/core.py`
+- `src/simulation/scenarios.py`
+
+Current scenario presets:
+- `Steady State`
+- `Demand Shock`
+- `Slow Seep`
+- `Compound Incident`
+
+## Model Artifact Loading
+
+[`src/models/artifacts.py`](src/models/artifacts.py) now prioritizes models in this order:
+
+1. `models/realtime/`
+2. `models/advanced/`
+3. dataset-specific files in `models/trained/`
+4. legacy fallback artifacts in `models/`
+
+That means newly trained realtime models appear automatically in the dashboard and live simulator without extra wiring.
+
+## Reports and Tests
+
+Benchmark outputs and dataset checks are written under `reports/dataset_checks/`.
+
+Relevant tests include:
+- `tests/test_loader.py`
+- `tests/test_engineer.py`
+- `tests/test_predict.py`
+- `tests/test_simulator.py`
+- `tests/test_realtime_models.py`
+
+## Notes
+
+- The current SCADA dataset is small and appears easy for the supervised boosted-tree models, so near-perfect metrics should be treated cautiously.
+- The realtime training path is intentionally config-driven so you can point it at better future datasets without rewriting code.
+- The anomaly detector is included to give you a second signal family for novel or weakly labeled conditions, but it should not be treated as a drop-in replacement for supervised leak labels.

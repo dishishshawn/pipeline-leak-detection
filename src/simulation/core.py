@@ -156,6 +156,17 @@ class PipelineTelemetrySimulator:
         self._next_tick_wall = None
         self._rng = random.Random(self.config.seed)
 
+    @property
+    def step_index(self) -> int:
+        return self._step_index
+
+    @property
+    def segment_ids(self) -> list[int]:
+        return [profile.segment_id for profile in self.config.segment_profiles]
+
+    def add_scenario(self, scenario: Scenario) -> None:
+        self.scenarios = (*self.scenarios, scenario)
+
     def snapshot(self) -> pd.DataFrame:
         return pd.DataFrame(list(self._history))
 

@@ -113,6 +113,29 @@ def supports_leak_score(model) -> bool:
     return hasattr(estimator, "predict")
 
 
+def expected_feature_columns(model) -> tuple[str, ...] | None:
+    """
+    Return the feature schema a model expects, when available.
+    """
+    _, estimator = _split_model(model)
+
+    feature_columns = getattr(estimator, "feature_columns", None)
+    if feature_columns is not None:
+        return tuple(feature_columns)
+
+    names_in = getattr(estimator, "feature_names_in_", None)
+    if names_in is not None:
+        return tuple(str(name) for name in names_in)
+
+    inner_model = getattr(estimator, "model", None)
+    if inner_model is not None:
+        inner_names = getattr(inner_model, "feature_names_in_", None)
+        if inner_names is not None:
+            return tuple(str(name) for name in inner_names)
+
+    return None
+
+
 def predict(model, df: pd.DataFrame) -> np.ndarray:
     """
     Return class predictions for a feature DataFrame.
