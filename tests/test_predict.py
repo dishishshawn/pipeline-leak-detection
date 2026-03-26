@@ -110,6 +110,24 @@ def test_predict_handles_legacy_tuple_model():
     np.testing.assert_array_equal(preds, np.array([0, 1, 1]))
 
 
+class NamedThresholdClassifier(ThresholdClassifier):
+    feature_names_in_ = np.array(["a", "b"])
+
+
+def test_predict_reindexes_dataframe_to_model_feature_schema():
+    model = NamedThresholdClassifier()
+    X = pd.DataFrame(
+        {
+            "a": [0.0, 1.0, 2.0],
+            "b": [0.0, 0.0, 0.0],
+            "pressure_pct_delta": [9.0, 9.0, 9.0],
+            "flow_roll_z": [8.0, 8.0, 8.0],
+        }
+    )
+    preds = predict(model, X)
+    np.testing.assert_array_equal(preds, np.array([0, 0, 1]))
+
+
 def test_predict_proba_uses_decision_function_when_available():
     model = DecisionFunctionClassifier()
     X = pd.DataFrame({"a": [0.0, 1.5, 3.0]})

@@ -20,8 +20,42 @@ def _split_model(model):
     return None, _patch_legacy_model(model)
 
 
+def _expected_feature_columns_from_parts(scaler, estimator) -> tuple[str, ...] | None:
+    feature_columns = getattr(estimator, "feature_columns", None)
+    if feature_columns is not None:
+        return tuple(str(name) for name in feature_columns)
+
+    names_in = getattr(estimator, "feature_names_in_", None)
+    if names_in is not None:
+        return tuple(str(name) for name in names_in)
+
+    inner_model = getattr(estimator, "model", None)
+    if inner_model is not None:
+        inner_names = getattr(inner_model, "feature_names_in_", None)
+        if inner_names is not None:
+            return tuple(str(name) for name in inner_names)
+
+    if scaler is not None:
+        scaler_names = getattr(scaler, "feature_names_in_", None)
+        if scaler_names is not None:
+            return tuple(str(name) for name in scaler_names)
+
+    return None
+
+
+def _align_feature_frame(scaler, estimator, df):
+    if not isinstance(df, pd.DataFrame):
+        return df
+
+    feature_columns = _expected_feature_columns_from_parts(scaler, estimator)
+    if feature_columns:
+        return df.reindex(columns=list(feature_columns), fill_value=0.0)
+    return df
+
+
 def _prepare_features(model, df: pd.DataFrame):
     scaler, estimator = _split_model(model)
+    df = _align_feature_frame(scaler, estimator, df)
     if scaler is not None:
         return estimator, scaler.transform(df)
     return estimator, df
@@ -119,23 +153,8 @@ def expected_feature_columns(model) -> tuple[str, ...] | None:
     """
     Return the feature schema a model expects, when available.
     """
-    _, estimator = _split_model(model)
-
-    feature_columns = getattr(estimator, "feature_columns", None)
-    if feature_columns is not None:
-        return tuple(feature_columns)
-
-    names_in = getattr(estimator, "feature_names_in_", None)
-    if names_in is not None:
-        return tuple(str(name) for name in names_in)
-
-    inner_model = getattr(estimator, "model", None)
-    if inner_model is not None:
-        inner_names = getattr(inner_model, "feature_names_in_", None)
-        if inner_names is not None:
-            return tuple(str(name) for name in inner_names)
-
-    return None
+    scaler, estimator = _split_model(model)
+    return _expected_feature_columns_from_parts(scaler, estimator)
 
 
 def predict(model, df: pd.DataFrame) -> np.ndarray:
