@@ -86,10 +86,22 @@ def load_data(path: str, dataset_type: str = "scada") -> pd.DataFrame:
 @st.cache_resource
 def _load_all_models(dataset_type: str) -> dict:
     """Load every artifact for the given dataset type. Results are cached once per dataset."""
-    return {
-        label: (load_model(artifact.path), artifact.path)
-        for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items()
-    }
+    loaded_models = {}
+    skipped_artifacts = []
+
+    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
+        try:
+            loaded_models[label] = (load_model(artifact.path), artifact.path)
+        except (ImportError, ModuleNotFoundError) as exc:
+            skipped_artifacts.append(f"{label} ({Path(artifact.path).name}): {exc}")
+
+    if skipped_artifacts:
+        st.warning(
+            "Some model artifacts were skipped because optional ML dependencies are not "
+            "installed in this environment: " + "; ".join(skipped_artifacts)
+        )
+
+    return loaded_models
 
 
 def load_models(dataset_type: str = "scada") -> dict:
