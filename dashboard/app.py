@@ -100,7 +100,7 @@ def load_live_models(dataset_type: str = "scada") -> dict:
     return {
         k: v[0]
         for k, v in _load_all_models(dataset_type).items()
-        if Path(v[1]).parent.name == "realtime"
+        if Path(v[1]).parent.name in {"realtime", "robust"}
     }
 
 
@@ -885,7 +885,7 @@ with live_tab:
             options=list(live_models.keys()) if live_models else ["No realtime models found"],
             key="live_model_name",
         )
-        st.caption("Live simulator scoring is limited to realtime-safe models from models/realtime.")
+        st.caption("Live simulator scoring is limited to live-safe models from models/realtime and models/robust.")
         st.markdown("**Preset description**")
         selected_preset_key = next(
             preset.key for preset in preset_definitions if preset.label == preset_label

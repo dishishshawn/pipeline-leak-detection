@@ -52,7 +52,9 @@ def save_model_artifact(
 
 
 def _normalize_label(stem: str) -> str:
-    for prefix in ("scada_pipeline_", "water_leak_"):
+    if stem.startswith("robust_realtime_realtime_"):
+        stem = f"robust_{stem[len('robust_realtime_realtime_'):]}"
+    for prefix in ("scada_pipeline_", "water_leak_", "robust_realtime_"):
         if stem.startswith(prefix):
             stem = stem[len(prefix):]
             break
@@ -65,7 +67,11 @@ def _infer_dataset_type(path: Path) -> str | None:
         return "water_leak"
     if stem.startswith("scada_pipeline_"):
         return "scada"
+    if stem.startswith("robust_realtime_"):
+        return "scada"
     if path.parent.name == "realtime":
+        return "scada"
+    if path.parent.name == "robust":
         return "scada"
     if path.parent.name == "advanced":
         return "scada"
@@ -76,17 +82,19 @@ def _infer_dataset_type(path: Path) -> str | None:
 
 def _artifact_priority(path: Path) -> int:
     stem = path.stem
-    if path.parent.name == "realtime":
+    if path.parent.name == "robust":
         return 0
-    if path.parent.name == "advanced":
+    if path.parent.name == "realtime":
         return 1
-    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
+    if path.parent.name == "advanced":
         return 2
-    if stem.startswith(("scada_pipeline_", "water_leak_")):
+    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
         return 3
-    if path.parent.name == "trained":
+    if stem.startswith(("scada_pipeline_", "water_leak_")):
         return 4
-    return 5
+    if path.parent.name == "trained":
+        return 5
+    return 6
 
 
 def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[str, ModelArtifact]:
@@ -94,12 +102,13 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
     Discover dashboard-loadable artifacts and choose one best artifact per model label.
 
     Priority order:
-    1. models/realtime/*.joblib
-    2. models/advanced/*.joblib
-    3. dataset-specific models/trained/<dataset>_*.joblib
-    4. dataset-specific models/trained/<dataset>_*.pkl
-    5. models/trained/*.joblib
-    6. models/*.joblib
+    1. models/robust/*.joblib
+    2. models/realtime/*.joblib
+    3. models/advanced/*.joblib
+    4. dataset-specific models/trained/<dataset>_*.joblib
+    5. dataset-specific models/trained/<dataset>_*.pkl
+    6. models/trained/*.joblib
+    7. models/*.joblib
     """
     root = Path(model_dir)
     candidates = sorted(root.glob("*.joblib"))
@@ -107,6 +116,7 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
     candidates += sorted((root / "trained").glob("*.pkl"))
     candidates += sorted((root / "advanced").glob("*.joblib"))
     candidates += sorted((root / "realtime").glob("*.joblib"))
+    candidates += sorted((root / "robust").glob("*.joblib"))
 
     selected: dict[str, ModelArtifact] = {}
     for path in candidates:

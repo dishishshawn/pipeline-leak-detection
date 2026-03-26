@@ -103,8 +103,21 @@ pip install -r requirements.txt
 Included data sources:
 
 - `data/sample/scada_sample.csv`: small SCADA sample for quick local checks
+- `data/sample/realtime_training_data.csv`: simulator-generated live-training corpus
 - `data/raw/scada_pipeline/scada_pipeline.csv`: alternate raw SCADA dataset retained for dataset exploration
 - `data/raw/water_leak/water_leak_detection_1000_rows.csv`: alternate water leak dataset used by the benchmark/dashboard path
+
+The dataset registry in `config/datasets.yaml` now also includes integration entries for:
+- `mendeley_water_testbed`
+- `petrobras_3w`
+- `phmsa_pipeline_incidents`
+- `usdot_pipeline_accidents`
+
+Those external sources are integrated with explicit intended roles:
+- telemetry-compatible leak datasets can feed the robust live-training corpus when their raw files are present locally
+- PHMSA / USDOT incident data is integrated for future asset-risk work, not live leak scoring
+
+For non-Kaggle sources, `python scripts/download_data.py --datasets <name>` now creates the expected raw-data directory and prints the upstream source URL so you can drop the files into the correct place.
 
 The training code is config-driven, so replacing `data.path` in the YAML configs is the intended way to retrain on newer, higher-quality datasets later.
 
@@ -126,8 +139,11 @@ The training code is config-driven, so replacing `data.path` in the YAML configs
 [`src/features/engineer.py`](src/features/engineer.py) builds the current feature set:
 - pressure delta
 - flow-rate delta
+- pressure and flow percent deltas
 - rolling pressure mean/std
 - rolling flow mean/std
+- rolling pressure/flow z-scores
+- pressure-to-flow ratio
 - encoded event type
 
 ### 3. Prediction Compatibility
@@ -178,7 +194,7 @@ venv\Scripts\python.exe scripts\train_realtime_models.py --config config\realtim
 
 Configuration lives in `config/realtime_training.yaml`.
 
-By default this trains on `data/sample/scada_sample.csv` and saves artifacts under `models/realtime/`.
+By default this trains on `data/sample/realtime_training_data.csv` and saves artifacts under `models/realtime/`.
 
 Current realtime model set:
 - `realtime_random_forest`
@@ -188,6 +204,29 @@ Current realtime model set:
 - `realtime_hybrid_ensemble`
 
 The hybrid ensemble combines multiple model families into one scoring artifact so you can compare a blended signal against single-model behavior in the dashboard.
+
+### Robust Training
+
+There is now a separate robust training path for live-safe fusion models:
+
+```powershell
+venv\Scripts\python.exe -m scripts.build_robust_training_data
+venv\Scripts\python.exe -m scripts.train_robust_models
+```
+
+This path:
+- regenerates simulator-aligned training data, including micro-leak scenarios
+- fuses it with any locally available telemetry-compatible external datasets
+- trains models with scale-invariant pressure/flow features under `models/robust/`
+
+Configuration lives in `config/robust_training.yaml`.
+
+Current defaults use:
+- `data/sample/realtime_training_data.csv`
+- `water_leak` when present
+- `mendeley_water_testbed` when present
+
+Robust artifacts are intended for the live simulator and are discovered alongside realtime artifacts.
 
 ## Dashboard
 

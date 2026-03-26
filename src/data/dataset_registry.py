@@ -4,7 +4,6 @@ Does not touch existing loader.py or its schema validation.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -34,6 +33,21 @@ def get_dataset(name: str, config_path: Optional[str] = None) -> Dict:
     return meta
 
 
+def _candidate_raw_paths(meta: Dict) -> list[Path]:
+    raw_dir = Path(meta["local_raw"])
+    if not raw_dir.exists():
+        return []
+
+    recursive = bool(meta.get("recursive", False))
+    file_globs = meta.get("file_globs") or ["*.csv"]
+
+    candidates: list[Path] = []
+    for pattern in file_globs:
+        matcher = raw_dir.rglob if recursive else raw_dir.glob
+        candidates.extend(sorted(path for path in matcher(pattern) if path.is_file()))
+    return candidates
+
+
 def get_phase_datasets(phase: int, config_path: Optional[str] = None) -> List[Dict]:
     """Return metadata for all datasets at a given phase."""
     registry = load_registry(config_path)
@@ -49,13 +63,16 @@ def get_phase_datasets(phase: int, config_path: Optional[str] = None) -> List[Di
 
 
 def raw_csv_path(name: str, config_path: Optional[str] = None) -> Optional[str]:
-    """Return path to raw CSV if it exists, else None."""
+    """Return path to the first raw dataset file if it exists, else None."""
     meta = get_dataset(name, config_path)
-    raw_dir = Path(meta["local_raw"])
-    if not raw_dir.exists():
-        return None
-    csvs = sorted(raw_dir.glob("*.csv"))
-    return str(csvs[0]) if csvs else None
+    candidates = _candidate_raw_paths(meta)
+    return str(candidates[0]) if candidates else None
+
+
+def raw_data_paths(name: str, config_path: Optional[str] = None) -> List[str]:
+    """Return all matching raw dataset files for a dataset."""
+    meta = get_dataset(name, config_path)
+    return [str(path) for path in _candidate_raw_paths(meta)]
 
 
 def is_downloaded(name: str, config_path: Optional[str] = None) -> bool:

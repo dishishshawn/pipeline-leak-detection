@@ -5,6 +5,9 @@ datasets:
     kaggle_path: "zara2099/scada-pipeline-operations-dataset"
     local_raw: "data/raw/scada_pipeline"
     local_processed: "data/processed/scada_pipeline"
+    telemetry_compatible: true
+    live_training_eligible: false
+    risk_model_eligible: false
     direct_fit: true
     phase: 1
     task_type: binary_classification
@@ -20,7 +23,7 @@ datasets:
     target: target
     id_col: null
     segment_col: segment_id
-    notes: "Simulated digital-twin SCADA data with normal/fault conditions"
+    notes: "Simulated digital-twin SCADA data with broad abnormal-event labels"
 
   water_leak:
     name: "Water Leak Dataset"
@@ -28,6 +31,9 @@ datasets:
     kaggle_path: "ziya07/water-leak-dataset"
     local_raw: "data/raw/water_leak"
     local_processed: "data/processed/water_leak"
+    telemetry_compatible: true
+    live_training_eligible: true
+    risk_model_eligible: false
     direct_fit: true
     phase: 1
     task_type: binary_classification
@@ -35,13 +41,16 @@ datasets:
       timestamp: Timestamp
       pressure: "Pressure (bar)"
       flow_rate: "Flow Rate (L/s)"
-      temperature: "Temperature (°C)"
+      temperature:
+        - "Temperature (degC)"
+        - "Temperature (°C)"
+        - "Temperature (Â°C)"
       sensor_id: Sensor_ID
       leak_label: "Leak Status"
     target: "Leak Status"
     id_col: Sensor_ID
     segment_col: null
-    notes: "Water pipeline leak/no-leak time-series with burst and anomaly fields"
+    notes: "Water pipeline leak/no-leak time-series with pressure and flow"
 
   smart_water_leak:
     name: "Smart Water Leak Detection Dataset"
@@ -49,6 +58,9 @@ datasets:
     kaggle_path: "talha97s/smart-water-leak-detection-dataset"
     local_raw: "data/raw/smart_water_leak"
     local_processed: "data/processed/smart_water_leak"
+    telemetry_compatible: true
+    live_training_eligible: false
+    risk_model_eligible: false
     direct_fit: false
     phase: 2
     task_type: binary_classification
@@ -61,7 +73,7 @@ datasets:
     target: null
     id_col: null
     segment_col: null
-    notes: "Simulated smart water network with geolocation — useful for transfer learning"
+    notes: "Simulated smart water network with geolocation"
 
   uci_hydraulic:
     name: "Condition Monitoring of Hydraulic Systems"
@@ -69,6 +81,9 @@ datasets:
     uci_url: "https://archive.ics.uci.edu/static/public/447/condition+monitoring+of+hydraulic+systems.zip"
     local_raw: "data/raw/uci_hydraulic"
     local_processed: "data/processed/uci_hydraulic"
+    telemetry_compatible: true
+    live_training_eligible: false
+    risk_model_eligible: false
     direct_fit: false
     phase: 2
     task_type: cycle_classification
@@ -78,10 +93,10 @@ datasets:
       temperature: TS1
       vibration: VS1
       power: EPS1
-    target: null  # from profile.txt — pump leakage column index 3
+    target: null
     id_col: null
     segment_col: null
-    notes: "Industrial multi-sensor cycle data; pump leakage severity is the leak proxy"
+    notes: "Industrial multi-sensor cycle data; useful for methodology but not direct leak training"
 
   gas_pipeline_acoustic:
     name: "High-Pressure Gas Pipeline Acoustic Dataset"
@@ -89,6 +104,9 @@ datasets:
     kaggle_path: "ziya07/high-pressure-gas-pipeline-acoustic-dataset"
     local_raw: "data/raw/gas_pipeline_acoustic"
     local_processed: "data/processed/gas_pipeline_acoustic"
+    telemetry_compatible: true
+    live_training_eligible: false
+    risk_model_eligible: false
     direct_fit: false
     phase: 3
     task_type: localization
@@ -98,4 +116,159 @@ datasets:
     target: leak_position
     id_col: null
     segment_col: null
-    notes: "Acoustic leak localization — lower priority for first demo"
+    notes: "Acoustic localization dataset; better for future multimodal work"
+
+  mendeley_water_testbed:
+    name: "Mendeley Water Leak Testbed"
+    source: mendeley
+    dataset_url: "https://data.mendeley.com/datasets/tbrnp6vrnj/1"
+    local_raw: "data/raw/mendeley_water_testbed"
+    local_processed: "data/processed/mendeley_water_testbed"
+    telemetry_compatible: true
+    live_training_eligible: true
+    risk_model_eligible: false
+    direct_fit: false
+    phase: 2
+    task_type: binary_classification
+    recursive: true
+    file_globs:
+      - "*.csv"
+      - "*.parquet"
+      - "*.txt"
+    column_map:
+      timestamp:
+        - timestamp
+        - Timestamp
+        - time
+        - Time
+      pressure:
+        - pressure
+        - Pressure
+        - pressure_1
+        - pressure_sensor_1
+        - dynamic_pressure_1
+      flow_rate:
+        - flow_rate
+        - Flow Rate
+        - flow
+        - flow_sensor
+      temperature:
+        - temperature
+        - Temperature
+      leak_label:
+        - leak_label
+        - leak_status
+        - Leak Status
+        - label
+        - Label
+        - class
+    target: target
+    id_col: null
+    segment_col: null
+    notes: "Experimental water leak testbed; promising for small-leak benchmarking when downloaded"
+
+  petrobras_3w:
+    name: "Petrobras 3W"
+    source: github
+    repo_url: "https://github.com/petrobras/3W"
+    local_raw: "data/raw/petrobras_3w"
+    local_processed: "data/processed/petrobras_3w"
+    telemetry_compatible: true
+    live_training_eligible: false
+    risk_model_eligible: false
+    direct_fit: false
+    phase: 2
+    task_type: multivariate_event_detection
+    recursive: true
+    file_globs:
+      - "*.csv"
+      - "*.parquet"
+    column_map:
+      timestamp:
+        - timestamp
+        - time
+      pressure:
+        - pressure
+        - P-PDG
+        - P-TPT
+        - P-MON-CKP
+      temperature:
+        - T-TPT
+        - temperature
+      flow_rate:
+        - flow_rate
+        - QGL
+      leak_label:
+        - class
+        - label
+        - event
+    target: target
+    id_col: null
+    segment_col: null
+    notes: "Useful for rare-event methodology, not a direct live leak source"
+
+  phmsa_pipeline_incidents:
+    name: "PHMSA Pipeline Source Data"
+    source: phmsa
+    dataset_url: "https://www.phmsa.dot.gov/data-and-statistics/pipeline/source-data"
+    local_raw: "data/raw/phmsa_pipeline_incidents"
+    local_processed: "data/processed/phmsa_pipeline_incidents"
+    telemetry_compatible: false
+    live_training_eligible: false
+    risk_model_eligible: true
+    direct_fit: false
+    phase: 2
+    task_type: asset_risk_modeling
+    recursive: true
+    file_globs:
+      - "*.csv"
+      - "*.xlsx"
+      - "*.xls"
+    column_map:
+      timestamp:
+        - Local_Date_Time
+        - Report_Received_Date
+        - Accident_Date
+      asset_id:
+        - Operator_ID
+        - OPERATOR_ID
+        - Operator Name
+      leak_label:
+        - Incident_Category
+        - Cause
+    target: null
+    id_col: null
+    segment_col: null
+    notes: "Official incident-reporting data; integrate for asset-risk work, not live leak scoring"
+
+  usdot_pipeline_accidents:
+    name: "USDOT Pipeline Accidents (Kaggle Mirror)"
+    source: kaggle
+    dataset_url: "https://www.kaggle.com/datasets/usdot/pipeline-accidents"
+    local_raw: "data/raw/usdot_pipeline_accidents"
+    local_processed: "data/processed/usdot_pipeline_accidents"
+    telemetry_compatible: false
+    live_training_eligible: false
+    risk_model_eligible: true
+    direct_fit: false
+    phase: 2
+    task_type: asset_risk_modeling
+    recursive: true
+    file_globs:
+      - "*.csv"
+      - "*.xlsx"
+      - "*.xls"
+    column_map:
+      timestamp:
+        - Accident_Date
+        - Date and Time
+      asset_id:
+        - Operator Name
+        - Operator_ID
+      leak_label:
+        - Cause
+        - Accident_Type
+    target: null
+    id_col: null
+    segment_col: null
+    notes: "Historical accident mirror; mostly redundant with PHMSA and not suitable for live scoring"

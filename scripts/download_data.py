@@ -81,6 +81,25 @@ def download_uci(dataset_key: str, meta: dict) -> bool:
         return False
 
 
+def prepare_manual_dataset(dataset_key: str, meta: dict) -> bool:
+    raw_dir = ROOT / meta["local_raw"]
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = [path for path in raw_dir.rglob("*") if path.is_file()]
+    if existing_files:
+        logger.info("Already present: %s (%d file(s))", dataset_key, len(existing_files))
+        return True
+
+    source_url = meta.get("dataset_url") or meta.get("repo_url") or meta.get("uci_url")
+    logger.warning(
+        "Dataset %s requires manual download. Place the raw files under %s and rerun normalization. Source: %s",
+        dataset_key,
+        raw_dir,
+        source_url or "unknown",
+    )
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Download datasets")
     parser.add_argument("--datasets", nargs="+", default=None, help="Dataset keys to download")
@@ -105,6 +124,8 @@ def main():
             ok = download_kaggle(key, meta)
         elif source == "uci":
             ok = download_uci(key, meta)
+        elif source in {"mendeley", "github", "phmsa"}:
+            ok = prepare_manual_dataset(key, meta)
         else:
             logger.warning("Unknown source '%s' for %s", source, key)
             ok = False

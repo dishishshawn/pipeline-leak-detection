@@ -41,7 +41,9 @@ def test_rolling_pressure_features_columns_created():
 def test_build_features_adds_all_columns():
     df = build_features(_make_df())
     for col in ["pressure_delta", "flow_rate_delta", "pressure_roll_mean",
-                "flow_roll_mean", "event_type_encoded"]:
+                "flow_roll_mean", "pressure_pct_delta", "flow_pct_delta",
+                "pressure_roll_z", "flow_roll_z", "pressure_flow_ratio",
+                "event_type_encoded"]:
         assert col in df.columns, f"Missing: {col}"
 
 

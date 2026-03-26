@@ -1,5 +1,6 @@
 import logging
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,24 @@ def add_flow_rate_delta(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby("segment_id")["flow_rate"].diff().fillna(0)
     )
 
+    return df
+
+
+def add_relative_change_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add percent-change style features that are less sensitive to dataset scale.
+    """
+    df = df.copy()
+    df = df.sort_values(["segment_id", "timestamp"])
+
+    prev_pressure = df.groupby("segment_id")["pressure"].shift(1).replace(0, np.nan)
+    prev_flow = df.groupby("segment_id")["flow_rate"].shift(1).replace(0, np.nan)
+
+    df["pressure_pct_delta"] = (df["pressure_delta"] / prev_pressure.abs()).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["flow_pct_delta"] = (df["flow_rate_delta"] / prev_flow.abs()).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    safe_flow = df["flow_rate"].replace(0, np.nan)
+    df["pressure_flow_ratio"] = (df["pressure"] / safe_flow).replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return df
 
 
@@ -75,6 +94,19 @@ def add_rolling_flow_features(df: pd.DataFrame, window: int = 5) -> pd.DataFrame
     return df
 
 
+def add_rolling_zscore_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add rolling z-scores for pressure and flow relative to recent history.
+    """
+    df = df.copy()
+    pressure_denom = df["pressure_roll_std"].replace(0, np.nan)
+    flow_denom = df["flow_roll_std"].replace(0, np.nan)
+
+    df["pressure_roll_z"] = ((df["pressure"] - df["pressure_roll_mean"]) / pressure_denom).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    df["flow_roll_z"] = ((df["flow_rate"] - df["flow_roll_mean"]) / flow_denom).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return df
+
+
 def encode_event_type(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert event_type to numeric codes.
@@ -95,8 +127,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df = add_pressure_delta(df)
     df = add_flow_rate_delta(df)
+    df = add_relative_change_features(df)
     df = add_rolling_pressure_features(df, window=5)
     df = add_rolling_flow_features(df, window=5)
+    df = add_rolling_zscore_features(df)
     df = encode_event_type(df)
 
     logger.info("Feature engineering complete. Shape: %s", df.shape)

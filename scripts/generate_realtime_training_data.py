@@ -84,6 +84,20 @@ def main():
             logger.info("Generating custom leak seg=%d start=%d", seg_id, start)
             frames.append(_run_custom_leak(start, seg_id, seed=seg_id * 100 + start))
 
+    # Micro leaks to force sensitivity to subtle pressure/flow deviations.
+    for seg_id in SEGMENT_IDS:
+        for start in [12, 36, 72]:
+            logger.info("Generating micro leak seg=%d start=%d", seg_id, start)
+            frames.append(_run_custom_leak(
+                start,
+                seg_id,
+                seed=seg_id * 300 + start,
+                ramp=18,
+                hold=32,
+                recovery=14,
+                max_severity=0.28,
+            ))
+
     # Fast ruptures
     for seg_id in SEGMENT_IDS:
         logger.info("Generating rupture seg=%d", seg_id)
