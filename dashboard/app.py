@@ -626,7 +626,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     for idx, (_, row) in enumerate(latest_rows.iterrows()):
         color = _segment_health_color(row)
         label = _segment_health_label(row)
-        emoji = {"green": ":green_circle:", "orange": ":orange_circle:", "red": ":red_circle:"}[color]
+        emoji = {"green": "🟢", "orange": "🟠", "red": "🔴"}[color]
         with segment_cols[idx + 1]:
             st.metric(
                 f"Seg {int(row['segment_id'])}",
