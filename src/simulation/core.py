@@ -59,6 +59,8 @@ class SegmentState:
             "event_type": self.event_type,
             "target": int(self.target),
             "scenario_context": self.scenario_context,
+            "leak_severity": round(self.leak_severity, 3),
+            "pump_efficiency": round(self.pump_efficiency, 3),
         }
 
 
@@ -90,18 +92,26 @@ class Scenario(Protocol):
 
 
 def make_default_profiles(segment_count: int = 3) -> tuple[SegmentProfile, ...]:
+    # Segments are differentiated like real pipeline zones: upstream high-pressure
+    # trunk, midstream distribution, downstream low-pressure branches.
+    _templates = [
+        dict(base_pressure=74.0, base_flow_rate=3.6, base_temperature=22.5,
+             base_pump_speed=1340.0, pressure_noise=0.8, flow_noise=0.22),
+        dict(base_pressure=67.0, base_flow_rate=2.9, base_temperature=25.0,
+             base_pump_speed=1180.0, pressure_noise=0.7, flow_noise=0.28),
+        dict(base_pressure=61.0, base_flow_rate=2.3, base_temperature=27.5,
+             base_pump_speed=1050.0, pressure_noise=0.9, flow_noise=0.18),
+        dict(base_pressure=70.0, base_flow_rate=3.1, base_temperature=24.0,
+             base_pump_speed=1220.0, pressure_noise=0.75, flow_noise=0.24),
+        dict(base_pressure=64.0, base_flow_rate=2.6, base_temperature=26.0,
+             base_pump_speed=1110.0, pressure_noise=0.85, flow_noise=0.20),
+        dict(base_pressure=58.0, base_flow_rate=2.0, base_temperature=29.0,
+             base_pump_speed=980.0, pressure_noise=1.0, flow_noise=0.16),
+    ]
     profiles = []
     for index in range(segment_count):
-        segment_id = index + 1
-        profiles.append(
-            SegmentProfile(
-                segment_id=segment_id,
-                base_pressure=69.0 + (index * 1.7),
-                base_flow_rate=2.8 + (index * 0.18),
-                base_temperature=24.0 + (index * 0.45),
-                base_pump_speed=1160.0 + (index * 55.0),
-            )
-        )
+        tpl = _templates[index % len(_templates)]
+        profiles.append(SegmentProfile(segment_id=index + 1, **tpl))
     return tuple(profiles)
 
 
@@ -236,6 +246,7 @@ class PipelineTelemetrySimulator:
         previous: SegmentState | None,
         context: SimulationContext,
     ) -> SegmentState:
+        rng = context.rng
         minute_of_day = context.timestamp.hour * 60 + context.timestamp.minute
         daily_cycle = math.sin(2.0 * math.pi * (minute_of_day / 1440.0 - 0.22))
         shoulder_cycle = math.sin(
@@ -250,20 +261,28 @@ class PipelineTelemetrySimulator:
         )
         pump_speed_target = profile.base_pump_speed * (0.96 + 0.1 * demand_multiplier)
 
+        # Occasional sensor spike (~2% chance) — realistic SCADA artifact
+        spike = 0.0
+        if rng.random() < 0.02:
+            spike = rng.choice([-1, 1]) * rng.uniform(1.5, 4.0)
+
         if previous is None:
-            pressure = pressure_target + context.rng.gauss(0.0, profile.pressure_noise)
-            flow_rate = flow_target + context.rng.gauss(0.0, profile.flow_noise)
-            temperature = temperature_target + context.rng.gauss(0.0, profile.temperature_noise)
-            pump_speed = pump_speed_target + context.rng.gauss(0.0, 15.0)
+            pressure = pressure_target + rng.gauss(0.0, profile.pressure_noise)
+            flow_rate = flow_target + rng.gauss(0.0, profile.flow_noise)
+            temperature = temperature_target + rng.gauss(0.0, profile.temperature_noise)
+            pump_speed = pump_speed_target + rng.gauss(0.0, 15.0)
         else:
             pressure = previous.pressure + 0.45 * (pressure_target - previous.pressure)
-            pressure += context.rng.gauss(0.0, profile.pressure_noise)
+            pressure += rng.gauss(0.0, profile.pressure_noise) + spike
             flow_rate = previous.flow_rate + 0.5 * (flow_target - previous.flow_rate)
-            flow_rate += context.rng.gauss(0.0, profile.flow_noise)
+            flow_rate += rng.gauss(0.0, profile.flow_noise)
+            # Correlated flow dip when pressure spikes down
+            if spike < -1.0:
+                flow_rate -= abs(spike) * 0.08
             temperature = previous.temperature + 0.35 * (temperature_target - previous.temperature)
-            temperature += context.rng.gauss(0.0, profile.temperature_noise)
+            temperature += rng.gauss(0.0, profile.temperature_noise)
             pump_speed = previous.pump_speed + 0.5 * (pump_speed_target - previous.pump_speed)
-            pump_speed += context.rng.gauss(0.0, 10.0)
+            pump_speed += rng.gauss(0.0, 12.0)
 
         compressor_state = profile.compressor_state if demand_multiplier < 1.1 else 1
         energy_consumption = 38.0

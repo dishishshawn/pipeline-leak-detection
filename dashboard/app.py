@@ -84,27 +84,28 @@ def load_data(path: str, dataset_type: str = "scada") -> pd.DataFrame:
 
 
 @st.cache_resource
-def load_models(dataset_type: str = "scada"):
-    models = {}
-    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
-        models[label] = load_model(artifact.path)
-    return models
+def _load_all_models(dataset_type: str) -> dict:
+    """Load every artifact for the given dataset type. Results are cached once per dataset."""
+    return {
+        label: (load_model(artifact.path), artifact.path)
+        for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items()
+    }
 
 
-@st.cache_resource
-def load_live_models(dataset_type: str = "scada"):
-    models = {}
-    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
-        if Path(artifact.path).parent.name != "realtime":
-            continue
-        models[label] = load_model(artifact.path)
-    return models
+def load_models(dataset_type: str = "scada") -> dict:
+    return {k: v[0] for k, v in _load_all_models(dataset_type).items()}
+
+
+def load_live_models(dataset_type: str = "scada") -> dict:
+    return {
+        k: v[0]
+        for k, v in _load_all_models(dataset_type).items()
+        if Path(v[1]).parent.name == "realtime"
+    }
 
 
 def with_segment_labels(df: pd.DataFrame) -> pd.DataFrame:
-    labeled = df.copy()
-    labeled["segment_label"] = labeled["segment_id"].astype(str)
-    return labeled
+    return df.assign(segment_label=df["segment_id"].astype(str))
 
 
 def segment_plot_args(df: pd.DataFrame) -> dict:
@@ -208,19 +209,19 @@ def score_live_history(history: pd.DataFrame, model):
     if history.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    display_df = history.copy()
     scoring_df = history.drop(
-        columns=["event_type", "target", "alarm_triggered", "scenario_context"],
+        columns=["event_type", "target", "alarm_triggered", "scenario_context",
+                 "leak_severity", "pump_efficiency"],
         errors="ignore",
     ).copy()
     featured = build_features(scoring_df)
-    exclude_cols = {"timestamp", "alarm_triggered"}
+    exclude_cols = {"timestamp", "alarm_triggered", "leak_severity", "pump_efficiency"}
     X_live = featured.select_dtypes(include=["number"]).drop(columns=exclude_cols, errors="ignore")
     feature_columns = expected_feature_columns(model) if model is not None else None
     if feature_columns:
         X_live = X_live.reindex(columns=list(feature_columns), fill_value=0.0)
     if X_live.empty:
-        return display_df, pd.DataFrame()
+        return history, pd.DataFrame()
 
     result_columns = [
         "timestamp",
@@ -233,14 +234,14 @@ def score_live_history(history: pd.DataFrame, model):
         "target",
         "scenario_context",
     ]
-    available_columns = [column for column in result_columns if column in display_df.columns]
-    result_df = display_df[available_columns].copy()
+    available_columns = [column for column in result_columns if column in history.columns]
+    result_df = history[available_columns].copy()
     result_df["predicted"] = predict(model, X_live)
 
     if supports_leak_score(model):
         result_df["leak_score"] = predict_leak_score(model, X_live).round(3)
 
-    return display_df, result_df
+    return history, result_df
 
 
 def score_live_history_incremental(
@@ -399,6 +400,7 @@ def render_historical_tabs(
     selected_model_name: str,
 ) -> None:
     filtered_labeled = with_segment_labels(filtered)
+    X_all, y_all = prepare_training_data(filtered)
     tab_ts, tab_pred, tab_eval = st.tabs(
         ["Time-series", "Predictions", "Model comparison"]
     )
@@ -445,12 +447,11 @@ def render_historical_tabs(
             st.warning("No trained model available. Run `python -m src.models.train` first.")
         else:
             model = models[selected_model_name]
-            X_live, _ = prepare_training_data(filtered)
 
-            if X_live.empty:
+            if X_all.empty:
                 st.warning("No feature data available after filtering.")
             else:
-                preds = predict(model, X_live)
+                preds = predict(model, X_all)
                 result_df = filtered[
                     ["timestamp", "segment_id", "pressure", "flow_rate", "target"]
                 ].copy()
@@ -458,7 +459,7 @@ def render_historical_tabs(
                 result_df["predicted"] = preds
 
                 if supports_leak_score(model):
-                    scores = predict_leak_score(model, X_live)
+                    scores = predict_leak_score(model, X_all)
                     result_df["leak_score"] = scores.round(3)
 
                     st.subheader("Leak probability scores")
@@ -493,8 +494,6 @@ def render_historical_tabs(
         if not models:
             st.warning("No trained models found in the `models/` directory.")
         else:
-            X_all, y_all = prepare_training_data(filtered)
-
             if X_all.empty or y_all.nunique() < 2:
                 st.warning("Not enough data or only one class present - cannot evaluate.")
             else:
@@ -547,6 +546,31 @@ def render_historical_tabs(
                     st.markdown("---")
 
 
+def _segment_health_color(row) -> str:
+    """Return a status color based on leak severity and pump efficiency."""
+    sev = row.get("leak_severity", 0.0)
+    eff = row.get("pump_efficiency", 1.0)
+    if sev >= 0.55 or eff < 0.75:
+        return "red"
+    if sev >= 0.18 or eff < 0.88:
+        return "orange"
+    return "green"
+
+
+def _segment_health_label(row) -> str:
+    sev = row.get("leak_severity", 0.0)
+    eff = row.get("pump_efficiency", 1.0)
+    if sev >= 0.55:
+        return "LEAK ALARM"
+    if sev >= 0.18:
+        return "LEAK WARNING"
+    if eff < 0.75:
+        return "PUMP FAULT"
+    if eff < 0.88:
+        return "PUMP DEGRADED"
+    return "NORMAL"
+
+
 def render_live_view(live_models: dict, selected_live_model: str, steps_per_refresh: int) -> None:
     simulator = st.session_state.get("live_simulator")
     running = st.session_state.get("live_running", False)
@@ -581,53 +605,121 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         else pd.DataFrame()
     )
 
-    metric1, metric2, metric3, metric4 = st.columns(4)
-    metric1.metric("Simulator status", "Running" if running else "Paused")
-    metric2.metric("Simulated time", latest_timestamp.strftime("%Y-%m-%d %H:%M:%S"))
-    metric3.metric("Rows emitted", f"{len(history):,}")
-    metric4.metric("Active leak segments", int(latest_rows["target"].sum()))
+    # ── Segment health cards ──────────────────────────────────────────
+    segment_cols = st.columns(len(latest_rows) + 1)
+    with segment_cols[0]:
+        st.metric("Status", "LIVE" if running else "PAUSED")
+        st.caption(latest_timestamp.strftime("%H:%M:%S"))
 
-    if not latest_scored.empty and "leak_score" in latest_scored.columns:
-        high_risk_segments = int((latest_scored["leak_score"] >= 0.5).sum())
-        st.caption(f"High-risk segments by model score >= 0.50: {high_risk_segments}")
+    for idx, (_, row) in enumerate(latest_rows.iterrows()):
+        color = _segment_health_color(row)
+        label = _segment_health_label(row)
+        emoji = {"green": ":green_circle:", "orange": ":orange_circle:", "red": ":red_circle:"}[color]
+        with segment_cols[idx + 1]:
+            st.metric(
+                f"Seg {int(row['segment_id'])}",
+                f"{row['pressure']:.1f} bar",
+                delta=f"{row['flow_rate']:.2f} m\u00b3/min",
+            )
+            st.caption(f"{emoji} {label}")
+
+    # ── Summary metrics row ───────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Rows emitted", f"{len(history):,}")
+    active_leaks = int(latest_rows["target"].sum())
+    m2.metric("Active leaks", active_leaks, delta=f"{active_leaks}" if active_leaks > 0 else None, delta_color="inverse")
+    max_severity = latest_rows["leak_severity"].max() if "leak_severity" in latest_rows.columns else 0.0
+    m3.metric("Max leak severity", f"{max_severity:.0%}")
+    min_eff = latest_rows["pump_efficiency"].min() if "pump_efficiency" in latest_rows.columns else 1.0
+    m4.metric("Min pump efficiency", f"{min_eff:.0%}")
+
     if not markers.empty:
-        st.caption("Red markers show the idealized earliest point where a strong model should begin flagging the leak.")
+        st.caption("Red diamond markers = idealized earliest detection point for a strong model.")
 
+    # ── Pressure and flow charts ──────────────────────────────────────
     chart_col1, chart_col2 = st.columns(2)
+    sorted_history = history_labeled.sort_values("timestamp")
+    seg_args = segment_plot_args(history_labeled)
+
     with chart_col1:
         fig_pressure = px.line(
-            history_labeled.sort_values("timestamp"),
-            x="timestamp",
-            y="pressure",
+            sorted_history, x="timestamp", y="pressure",
             labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
-            title="Live pressure telemetry",
-            **segment_plot_args(history_labeled),
+            title="Pressure",
+            **seg_args,
         )
+        fig_pressure.update_layout(height=320, margin=dict(t=35, b=25))
         add_ideal_detection_overlay(fig_pressure, markers, y_column="pressure", chart_name="Pressure")
         st.plotly_chart(fig_pressure, use_container_width=True)
 
     with chart_col2:
         fig_flow = px.line(
-            history_labeled.sort_values("timestamp"),
-            x="timestamp",
-            y="flow_rate",
-            labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
-            title="Live flow telemetry",
-            **segment_plot_args(history_labeled),
+            sorted_history, x="timestamp", y="flow_rate",
+            labels={"flow_rate": "Flow (m\u00b3/min)", "timestamp": "Time", "segment_label": "Segment"},
+            title="Flow Rate",
+            **seg_args,
         )
+        fig_flow.update_layout(height=320, margin=dict(t=35, b=25))
         add_ideal_detection_overlay(fig_flow, markers, y_column="flow_rate", chart_name="Flow")
         st.plotly_chart(fig_flow, use_container_width=True)
 
+    # ── Leak severity and temperature charts ──────────────────────────
+    has_severity = "leak_severity" in history.columns and history["leak_severity"].max() > 0
+    chart_col3, chart_col4 = st.columns(2)
+
+    with chart_col3:
+        if has_severity:
+            fig_sev = px.line(
+                sorted_history, x="timestamp", y="leak_severity",
+                labels={"leak_severity": "Severity", "timestamp": "Time", "segment_label": "Segment"},
+                title="Leak Severity",
+                **seg_args,
+            )
+            fig_sev.add_hline(y=0.18, line_dash="dot", line_color="orange", annotation_text="warning")
+            fig_sev.add_hline(y=0.55, line_dash="dot", line_color="red", annotation_text="alarm")
+            fig_sev.update_layout(height=300, margin=dict(t=35, b=25))
+            st.plotly_chart(fig_sev, use_container_width=True)
+        else:
+            fig_temp = px.line(
+                sorted_history, x="timestamp", y="temperature",
+                labels={"temperature": "Temp (\u00b0C)", "timestamp": "Time", "segment_label": "Segment"},
+                title="Temperature",
+                **seg_args,
+            )
+            fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
+            st.plotly_chart(fig_temp, use_container_width=True)
+
+    with chart_col4:
+        if has_severity:
+            fig_temp = px.line(
+                sorted_history, x="timestamp", y="temperature",
+                labels={"temperature": "Temp (\u00b0C)", "timestamp": "Time", "segment_label": "Segment"},
+                title="Temperature",
+                **seg_args,
+            )
+            fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
+            st.plotly_chart(fig_temp, use_container_width=True)
+        else:
+            fig_energy = px.line(
+                sorted_history, x="timestamp", y="energy_consumption",
+                labels={"energy_consumption": "Energy (kW)", "timestamp": "Time", "segment_label": "Segment"},
+                title="Energy Consumption",
+                **seg_args,
+            )
+            fig_energy.update_layout(height=300, margin=dict(t=35, b=25))
+            st.plotly_chart(fig_energy, use_container_width=True)
+
+    # ── Model leak score chart ────────────────────────────────────────
     if not scored.empty and "leak_score" in scored.columns:
         fig_score = px.line(
             scored_labeled.sort_values("timestamp"),
-            x="timestamp",
-            y="leak_score",
+            x="timestamp", y="leak_score",
             labels={"leak_score": "Leak score", "timestamp": "Time", "segment_label": "Segment"},
-            title=f"Model leak score ({selected_live_model})",
+            title=f"Model Leak Score ({selected_live_model})",
             **segment_plot_args(scored_labeled),
         )
         fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="alert threshold")
+        fig_score.update_layout(height=320, margin=dict(t=35, b=25))
         if not markers.empty:
             score_markers = markers[["segment_id", "timestamp"]].copy()
             score_values = (
@@ -643,59 +735,43 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 )
         st.plotly_chart(fig_score, use_container_width=True)
 
+    # ── Telemetry & model tables ──────────────────────────────────────
     table_col1, table_col2 = st.columns(2)
+    telemetry_cols = [
+        c for c in [
+            "segment_id", "pressure", "flow_rate", "temperature",
+            "leak_severity", "pump_efficiency",
+            "alarm_triggered", "event_type", "target",
+        ] if c in latest_rows.columns
+    ]
     with table_col1:
-        st.subheader("Latest telemetry snapshot")
-        st.dataframe(
-            latest_rows[
-                [
-                    "segment_id",
-                    "pressure",
-                    "flow_rate",
-                    "temperature",
-                    "alarm_triggered",
-                    "event_type",
-                    "target",
-                    "scenario_context",
-                ]
-            ],
-            use_container_width=True,
-        )
+        st.subheader("Latest telemetry")
+        st.dataframe(latest_rows[telemetry_cols], use_container_width=True, hide_index=True)
 
     with table_col2:
         if latest_scored.empty:
             st.subheader("Model output")
-            st.info("Load a SCADA-compatible model to score the live telemetry stream.")
+            st.info("Select a realtime model to score the live stream.")
         else:
             visible_columns = [
-                column
-                for column in [
-                    "segment_id",
-                    "predicted",
-                    "leak_score",
-                    "event_type",
-                    "target",
-                    "scenario_context",
-                ]
-                if column in latest_scored.columns
+                c for c in [
+                    "segment_id", "predicted", "leak_score",
+                    "event_type", "target",
+                ] if c in latest_scored.columns
             ]
-            st.subheader("Latest model output")
-            st.dataframe(latest_scored[visible_columns], use_container_width=True)
+            st.subheader("Model output")
+            st.dataframe(latest_scored[visible_columns], use_container_width=True, hide_index=True)
 
-    st.subheader("Recent telemetry")
-    history_columns = [
-        "timestamp",
-        "segment_id",
-        "pressure",
-        "flow_rate",
-        "temperature",
-        "alarm_triggered",
-        "event_type",
-        "target",
-        "scenario_context",
-    ]
-    recent = history.sort_values("timestamp", ascending=False)[history_columns].head(30)
-    st.dataframe(recent, use_container_width=True)
+    with st.expander("Recent telemetry log", expanded=False):
+        log_cols = [
+            c for c in [
+                "timestamp", "segment_id", "pressure", "flow_rate", "temperature",
+                "leak_severity", "pump_efficiency",
+                "alarm_triggered", "event_type", "target", "scenario_context",
+            ] if c in history.columns
+        ]
+        recent = history.sort_values("timestamp", ascending=False)[log_cols].head(40)
+        st.dataframe(recent, use_container_width=True, hide_index=True)
 
 
 ensure_live_state()
@@ -705,7 +781,7 @@ st.sidebar.markdown("---")
 
 dataset_options = {
     "SCADA Pipeline": "scada",
-    "Water Leak": "water_leak",
+    "Water Leak (labels unavailable)": "water_leak",
 }
 selected_dataset_name = st.sidebar.selectbox(
     "Dataset Type",
@@ -753,11 +829,6 @@ selected_model_name = st.sidebar.selectbox(
     "Active historical model",
     list(models.keys()) if models else ["No models found"],
 )
-
-if models:
-    with st.sidebar.expander("Available Historical Models"):
-        for name in models.keys():
-            st.write(f"- {name}")
 
 st.title("Pipeline Leak Detection Dashboard")
 
@@ -917,9 +988,6 @@ with live_tab:
         @st.fragment(run_every=f"{int(tick_seconds)}s")
         def _live_fragment() -> None:
             render_live_view(live_models, selected_live_model, steps_per_refresh)
-
         _live_fragment()
     else:
-        if st.session_state.get("live_running") and not hasattr(st, "fragment"):
-            st.info("Your Streamlit build does not expose `st.fragment`, so use the page rerun to refresh live telemetry.")
         render_live_view(live_models, selected_live_model, steps_per_refresh)

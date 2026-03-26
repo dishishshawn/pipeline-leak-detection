@@ -13,7 +13,13 @@ def _progress(
     ramp_steps: int,
     hold_steps: int,
     recovery_steps: int,
+    residual: float = 0.0,
 ) -> float:
+    """Compute scenario intensity with optional residual floor after recovery.
+
+    ``residual`` (0.0-1.0) controls how much severity persists after recovery
+    (e.g. 0.3 means the system never fully heals — realistic for leaks/wear).
+    """
     if step_index < start_step:
         return 0.0
 
@@ -27,8 +33,9 @@ def _progress(
         return 1.0
     if elapsed < ramp_steps + hold_steps + recovery_steps:
         recovery_elapsed = elapsed - ramp_steps - hold_steps
-        return max(0.0, 1.0 - ((recovery_elapsed + 1) / recovery_steps))
-    return 0.0
+        raw = max(0.0, 1.0 - ((recovery_elapsed + 1) / recovery_steps))
+        return max(residual, raw)
+    return residual
 
 
 @dataclass(frozen=True)
@@ -77,6 +84,7 @@ class PumpWearScenario:
     hold_steps: int = 16
     recovery_steps: int = 4
     intensity: float = 1.0
+    residual: float = 0.2
     affected_segments: Sequence[int] | None = None
 
     def apply(self, state: SegmentState, context: SimulationContext) -> SegmentState:
@@ -89,6 +97,7 @@ class PumpWearScenario:
             ramp_steps=self.ramp_steps,
             hold_steps=self.hold_steps,
             recovery_steps=self.recovery_steps,
+            residual=self.residual,
         ) * self.intensity
         if severity <= 0.0:
             return state
@@ -119,6 +128,7 @@ class LeakProgressionScenario:
     hold_steps: int = 18
     recovery_steps: int = 8
     max_severity: float = 1.0
+    residual: float = 0.3
     affected_segments: Sequence[int] | None = None
 
     def apply(self, state: SegmentState, context: SimulationContext) -> SegmentState:
@@ -131,6 +141,7 @@ class LeakProgressionScenario:
             ramp_steps=self.ramp_steps,
             hold_steps=self.hold_steps,
             recovery_steps=self.recovery_steps,
+            residual=self.residual,
         ) * self.max_severity
         if severity <= 0.0:
             return state
@@ -138,7 +149,7 @@ class LeakProgressionScenario:
         state.leak_severity = max(state.leak_severity, severity)
         state.pressure -= 14.0 * severity
         state.flow_rate *= max(0.42, 1.0 - 0.24 * severity)
-        state.temperature += 0.5 * severity
+        state.temperature += 2.0 * severity
         state.energy_consumption += 12.0 * severity
         state.target = 1 if severity >= 0.18 else state.target
         state.alarm_triggered = 1 if severity >= 0.55 else state.alarm_triggered

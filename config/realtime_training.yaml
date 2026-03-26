@@ -1,5 +1,5 @@
 data:
-  path: "data/sample/scada_sample.csv"
+  path: "data/sample/realtime_training_data.csv"
   dataset_name: "scada_pipeline"
   sample_size: null
 
@@ -7,8 +7,19 @@ feature_selection:
   include_columns:
     - "pressure"
     - "flow_rate"
+    - "temperature"
+    - "pump_speed"
+    - "energy_consumption"
+    - "pressure_delta"
+    - "flow_rate_delta"
+    - "pressure_roll_mean"
+    - "pressure_roll_std"
+    - "flow_roll_mean"
+    - "flow_roll_std"
   exclude_columns:
     - "event_type_encoded"
+    - "leak_severity"
+    - "pump_efficiency"
 
 training:
   random_state: 42
