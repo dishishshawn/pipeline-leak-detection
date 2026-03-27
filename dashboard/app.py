@@ -31,6 +31,7 @@ from src.models.predict import (
     supports_probability_scores,
 )
 from src.models.train import prepare_training_data
+from src.evaluation.alert_policy import AlertPolicy, AlertPolicyConfig
 from src.simulation import (
     PipelineTelemetrySimulator,
     SimulationConfig,
@@ -176,6 +177,7 @@ def ensure_live_state() -> None:
     st.session_state.setdefault("live_signature", None)
     st.session_state.setdefault("live_scored_history", pd.DataFrame())
     st.session_state.setdefault("live_scored_model", None)
+    st.session_state.setdefault("live_alert_policies", {})
 
 
 def simulator_signature(
@@ -232,6 +234,41 @@ def inject_manual_leak(simulator: PipelineTelemetrySimulator, preset_key: str, s
 def clear_live_score_cache() -> None:
     st.session_state["live_scored_history"] = pd.DataFrame()
     st.session_state["live_scored_model"] = None
+    st.session_state["live_alert_policies"] = {}
+
+
+def get_alert_policy(model_name: str, segment_id: int) -> AlertPolicy:
+    """Return the persisted AlertPolicy for this model+segment, creating if needed."""
+    policies: dict = st.session_state["live_alert_policies"]
+    key = (model_name, segment_id)
+    if key not in policies:
+        threshold = get_alert_threshold(model_name)
+        config = AlertPolicyConfig(
+            threshold=threshold,
+            persistence_ticks=3,
+            cooldown_ticks=10,
+            mode="persistence",
+        )
+        policies[key] = AlertPolicy(config)
+    return policies[key]
+
+
+def apply_alert_policies(scored: pd.DataFrame, model_name: str) -> pd.DataFrame:
+    """Add 'model_alert' column by feeding each segment's scores through AlertPolicy."""
+    if scored.empty or "leak_score" not in scored.columns:
+        return scored
+
+    scored = scored.sort_values(["segment_id", "timestamp"]).copy()
+    scored["model_alert"] = False
+
+    for segment_id in scored["segment_id"].unique():
+        policy = get_alert_policy(model_name, int(segment_id))
+        mask = scored["segment_id"] == segment_id
+        segment_scores = scored.loc[mask, "leak_score"]
+        alerts = [policy.update(float(s)) for s in segment_scores]
+        scored.loc[mask, "model_alert"] = alerts
+
+    return scored
 
 
 def sync_live_history(new_rows: pd.DataFrame) -> None:
@@ -305,7 +342,12 @@ def score_live_history_incremental(
         or cached_scores.empty
         or any(column not in cached_scores.columns for column in LIVE_SCORE_KEY_COLUMNS)
     ):
+        # Reset alert policies when rescoring from scratch
+        policies = st.session_state["live_alert_policies"]
+        for key in [k for k in policies if k[0] == model_name]:
+            del policies[key]
         _, rescored = score_live_history(history, model)
+        rescored = apply_alert_policies(rescored, model_name)
         st.session_state["live_scored_history"] = rescored.copy()
         st.session_state["live_scored_model"] = model_name
         return rescored
@@ -360,6 +402,12 @@ def score_live_history_incremental(
             how="inner",
         )
         if not scored_new.empty:
+            if "leak_score" in scored_new.columns:
+                policy = get_alert_policy(model_name, int(segment_id))
+                scored_new = scored_new.copy()
+                scored_new["model_alert"] = [
+                    policy.update(float(s)) for s in scored_new["leak_score"]
+                ]
             scored_parts.append(scored_new)
 
     updated_scores = (
@@ -371,7 +419,11 @@ def score_live_history_incremental(
     )
 
     if len(updated_scores) != len(current_keys):
+        policies = st.session_state["live_alert_policies"]
+        for key in [k for k in policies if k[0] == model_name]:
+            del policies[key]
         _, updated_scores = score_live_history(history, model)
+        updated_scores = apply_alert_policies(updated_scores, model_name)
 
     st.session_state["live_scored_history"] = updated_scores.copy()
     st.session_state["live_scored_model"] = model_name
@@ -650,6 +702,13 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     )
 
     # ── Segment health cards ──────────────────────────────────────────
+    # Build set of segments with active model alerts
+    _alert_segments: set[int] = set()
+    if not latest_scored.empty and "model_alert" in latest_scored.columns:
+        for _, _arow in latest_scored.iterrows():
+            if _arow.get("model_alert"):
+                _alert_segments.add(int(_arow["segment_id"]))
+
     segment_cols = st.columns(len(latest_rows) + 1)
     with segment_cols[0]:
         st.metric("Status", "LIVE" if running else "PAUSED")
@@ -666,6 +725,8 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 delta=f"{row['flow_rate']:.2f} m\u00b3/min",
             )
             st.caption(f"{emoji} {label}")
+            if int(row["segment_id"]) in _alert_segments:
+                st.caption("🚨 MODEL ALERT")
 
     # ── Summary metrics row ───────────────────────────────────────────
     m1, m2, m3, m4 = st.columns(4)
@@ -764,6 +825,20 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         )
         _threshold = get_alert_threshold(selected_live_model)
         fig_score.add_hline(y=_threshold, line_dash="dash", line_color="red", annotation_text=f"alert threshold ({_threshold:.2f})")
+        # Add red triangle markers for confirmed alerts (after persistence window)
+        if "model_alert" in scored.columns:
+            alert_pts = scored[scored["model_alert"] == True]
+            if not alert_pts.empty:
+                alert_pts_labeled = with_segment_labels(alert_pts)
+                fig_score.add_trace(go.Scatter(
+                    x=alert_pts_labeled["timestamp"],
+                    y=alert_pts_labeled["leak_score"],
+                    mode="markers",
+                    marker=dict(symbol="triangle-up", size=10, color="red",
+                                line=dict(width=1, color="darkred")),
+                    name="Confirmed Alert",
+                    showlegend=True,
+                ))
         fig_score.update_layout(height=320, margin=dict(t=35, b=25))
         if not markers.empty:
             score_markers = markers[["segment_id", "timestamp"]].copy()
@@ -801,7 +876,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
             visible_columns = [
                 c for c in [
                     "segment_id", "predicted", "leak_score",
-                    "event_type", "target",
+                    "model_alert", "event_type", "target",
                 ] if c in latest_scored.columns
             ]
             st.subheader("Model output")

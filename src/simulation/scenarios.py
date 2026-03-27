@@ -282,6 +282,21 @@ def get_manual_leak_presets() -> tuple[ManualLeakPreset, ...]:
             ],
         ),
         ManualLeakPreset(
+            key="micro_leak_manual",
+            label="Micro Leak",
+            description="A very small, subtle leak that is hard to detect. Tests model sensitivity at low severity.",
+            factory=lambda start_step, segment_id: [
+                LeakProgressionScenario(
+                    start_step=start_step,
+                    ramp_steps=20,
+                    hold_steps=30,
+                    recovery_steps=12,
+                    max_severity=0.25,
+                    affected_segments=[segment_id],
+                )
+            ],
+        ),
+        ManualLeakPreset(
             key="pump_assisted_leak_manual",
             label="Pump-Assisted Leak",
             description="Pump degradation appears first, then transitions into a leak on the same segment.",
