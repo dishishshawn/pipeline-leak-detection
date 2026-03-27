@@ -1,0 +1,139 @@
+{
+  "config": {
+    "runs_per_scenario": 5,
+    "steps_per_run": 120,
+    "target_fpr": 0.05,
+    "base_seed": 9999,
+    "scenarios": [
+      "steady_state",
+      "slow_seep",
+      "demand_shock",
+      "compound_incident",
+      "micro_leak"
+    ]
+  },
+  "calibrated_thresholds": {
+    "Realtime Hybrid Ensemble": 0.2517,
+    "Realtime Isolation Forest": 0.7554,
+    "Realtime Lightgbm": 0.15,
+    "Realtime Random Forest": 0.1949,
+    "Realtime Xgboost": 0.15,
+    "Robust Hybrid Ensemble": 0.3889,
+    "Robust Isolation Forest": 0.7164,
+    "Robust Lightgbm": 0.2974,
+    "Robust Random Forest": 0.3167,
+    "Robust Xgboost": 0.3269
+  },
+  "models": [
+    {
+      "model_name": "Realtime Hybrid Ensemble",
+      "fpr_steady_state": 0.0005797101449275362,
+      "fpr_demand_shock": 0.0672463768115942,
+      "detection_delay_slow_seep": 0.6,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.5725490196078431,
+      "alert_stability": 0.08695652173913045,
+      "calibrated_threshold": 0.2517,
+      "threshold_used": 0.2517
+    },
+    {
+      "model_name": "Realtime Isolation Forest",
+      "fpr_steady_state": 0.00927536231884058,
+      "fpr_demand_shock": 0.18840579710144928,
+      "detection_delay_slow_seep": 4.2,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.0392156862745098,
+      "alert_stability": 0.06473429951690822,
+      "calibrated_threshold": 0.7554,
+      "threshold_used": 0.7554
+    },
+    {
+      "model_name": "Realtime Lightgbm",
+      "fpr_steady_state": 0.0,
+      "fpr_demand_shock": 0.002898550724637681,
+      "detection_delay_slow_seep": 0.8,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.0392156862745098,
+      "alert_stability": 0.010821256038647345,
+      "calibrated_threshold": 0.15,
+      "threshold_used": 0.15
+    },
+    {
+      "model_name": "Realtime Random Forest",
+      "fpr_steady_state": 0.0005797101449275362,
+      "fpr_demand_shock": 0.06782608695652174,
+      "detection_delay_slow_seep": 0.8,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.9333333333333333,
+      "alert_stability": 0.02821256038647343,
+      "calibrated_threshold": 0.1949,
+      "threshold_used": 0.1949
+    },
+    {
+      "model_name": "Realtime Xgboost",
+      "fpr_steady_state": 0.0005797101449275362,
+      "fpr_demand_shock": 0.00463768115942029,
+      "detection_delay_slow_seep": 0.6,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.5294117647058824,
+      "alert_stability": 0.07265700483091789,
+      "calibrated_threshold": 0.15,
+      "threshold_used": 0.15
+    },
+    {
+      "model_name": "Robust Hybrid Ensemble",
+      "fpr_steady_state": 0.10202898550724637,
+      "fpr_demand_shock": 0.10434782608695652,
+      "detection_delay_slow_seep": 2.0,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.1568627450980392,
+      "alert_stability": 0.1795169082125604,
+      "calibrated_threshold": 0.3889,
+      "threshold_used": 0.3889
+    },
+    {
+      "model_name": "Robust Isolation Forest",
+      "fpr_steady_state": 0.10434782608695652,
+      "fpr_demand_shock": 0.1628985507246377,
+      "detection_delay_slow_seep": 2.2,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.12549019607843137,
+      "alert_stability": 0.21140096618357485,
+      "calibrated_threshold": 0.7164,
+      "threshold_used": 0.7164
+    },
+    {
+      "model_name": "Robust Lightgbm",
+      "fpr_steady_state": 0.09333333333333334,
+      "fpr_demand_shock": 0.09797101449275362,
+      "detection_delay_slow_seep": 3.2,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.16470588235294117,
+      "alert_stability": 0.17468599033816423,
+      "calibrated_threshold": 0.2974,
+      "threshold_used": 0.2974
+    },
+    {
+      "model_name": "Robust Random Forest",
+      "fpr_steady_state": 0.11884057971014493,
+      "fpr_demand_shock": 0.11710144927536231,
+      "detection_delay_slow_seep": 2.0,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.13725490196078433,
+      "alert_stability": 0.19458937198067633,
+      "calibrated_threshold": 0.3167,
+      "threshold_used": 0.3167
+    },
+    {
+      "model_name": "Robust Xgboost",
+      "fpr_steady_state": 0.1055072463768116,
+      "fpr_demand_shock": 0.11536231884057971,
+      "detection_delay_slow_seep": 2.2,
+      "detection_rate_slow_seep": 1.0,
+      "sensitivity_micro_leak": 0.17647058823529413,
+      "alert_stability": 0.19497584541062804,
+      "calibrated_threshold": 0.3269,
+      "threshold_used": 0.3269
+    }
+  ]
+}

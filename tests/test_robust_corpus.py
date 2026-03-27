@@ -98,3 +98,17 @@ def test_discover_model_artifacts_prefers_robust_models(tmp_path):
     artifacts = discover_model_artifacts(models_root, "scada")
 
     assert Path(artifacts["Robust Random Forest"].path).parent.name == "robust"
+
+
+def test_discover_model_artifacts_skips_physics_scaler_files(tmp_path):
+    models_root = tmp_path / "models"
+    physics_dir = models_root / "physics_sim"
+    physics_dir.mkdir(parents=True)
+
+    joblib.dump(ConstantModel(), physics_dir / "physics_sim_random_forest.joblib")
+    joblib.dump(ConstantModel(), physics_dir / "physics_sim_logistic_regression_scaler.joblib")
+
+    artifacts = discover_model_artifacts(models_root, "scada")
+
+    assert "Physics Sim Logistic Regression Scaler" not in artifacts
+    assert "Physics Sim Random Forest" in artifacts

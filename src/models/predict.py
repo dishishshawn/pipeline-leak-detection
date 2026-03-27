@@ -6,6 +6,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from src.models.physics_wrapper import PhysicsModelWrapper
+
 
 def _patch_legacy_model(model):
     if type(model).__name__ == "LogisticRegression" and not hasattr(model, "multi_class"):
@@ -119,12 +121,24 @@ def _positive_class_index(estimator, proba: np.ndarray) -> int:
 def load_model(path: str):
     """
     Load a trained model from disk and patch older sklearn artifacts as needed.
+
+    For physics_sim models, wrap them with PhysicsModelWrapper to engineer
+    features on-the-fly from raw SCADA data.
     """
     model_path = Path(path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {path}")
     model = joblib.load(model_path)
     scaler, estimator = _split_model(model)
+
+    # Wrap physics_sim models to auto-engineer features from raw SCADA
+    if "physics_sim" in str(model_path):
+        if scaler is None:
+            scaler_path = model_path.with_name(f"{model_path.stem}_scaler{model_path.suffix}")
+            if scaler_path.exists():
+                scaler = joblib.load(scaler_path)
+        return PhysicsModelWrapper(estimator, scaler=scaler)
+
     if scaler is not None:
         return scaler, estimator
     return estimator
@@ -161,6 +175,9 @@ def predict(model, df: pd.DataFrame) -> np.ndarray:
     """
     Return class predictions for a feature DataFrame.
     """
+    # PhysicsModelWrapper handles its own feature engineering
+    if isinstance(model, PhysicsModelWrapper):
+        return model.predict(df)
     estimator, X = _prepare_features(model, df)
     return estimator.predict(X)
 
@@ -169,6 +186,9 @@ def predict_proba(model, df: pd.DataFrame) -> np.ndarray:
     """
     Return class probabilities or compatibility-layer approximations.
     """
+    # PhysicsModelWrapper handles its own feature engineering
+    if isinstance(model, PhysicsModelWrapper):
+        return model.predict_proba(df)
     estimator, X = _prepare_features(model, df)
 
     if hasattr(estimator, "predict_proba"):
@@ -192,7 +212,8 @@ def predict_leak_score(model, df: pd.DataFrame) -> np.ndarray:
     """
     Return the positive-class leak score for each sample.
     """
-    estimator, _ = _prepare_features(model, df)
+    # Extract estimator without re-preparing features (predict_proba does that)
+    _, estimator = _split_model(model)
     proba = predict_proba(model, df)
     if proba.ndim == 1:
         return proba

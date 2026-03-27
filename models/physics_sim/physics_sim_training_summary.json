@@ -1,0 +1,99 @@
+{
+  "dataset": "data\\physics_sim\\scada_timeseries.csv",
+  "n_total": 144200,
+  "n_scenarios": 200,
+  "leak_label_distribution": {
+    "0": 93452,
+    "1": 50748
+  },
+  "n_features": 27,
+  "test_split": 0.2,
+  "seed": 42,
+  "models": {
+    "logistic_regression": {
+      "roc_auc": 0.9925,
+      "accuracy": 0.9723,
+      "precision": 0.9919,
+      "recall": 0.929,
+      "f1": 0.9594,
+      "confusion_matrix": [
+        [
+          18613,
+          77
+        ],
+        [
+          721,
+          9429
+        ]
+      ]
+    },
+    "random_forest": {
+      "roc_auc": 0.9981,
+      "accuracy": 0.9844,
+      "precision": 0.9906,
+      "recall": 0.9649,
+      "f1": 0.9776,
+      "confusion_matrix": [
+        [
+          18597,
+          93
+        ],
+        [
+          356,
+          9794
+        ]
+      ]
+    },
+    "xgboost": {
+      "roc_auc": 0.9984,
+      "accuracy": 0.9875,
+      "precision": 0.9924,
+      "recall": 0.972,
+      "f1": 0.9821,
+      "confusion_matrix": [
+        [
+          18614,
+          76
+        ],
+        [
+          284,
+          9866
+        ]
+      ]
+    },
+    "lightgbm": {
+      "roc_auc": 0.9981,
+      "accuracy": 0.9851,
+      "precision": 0.9903,
+      "recall": 0.9672,
+      "f1": 0.9786,
+      "confusion_matrix": [
+        [
+          18594,
+          96
+        ],
+        [
+          333,
+          9817
+        ]
+      ]
+    },
+    "isolation_forest": {
+      "roc_auc": 0.2603,
+      "accuracy": 0.6481,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": [
+        [
+          18690,
+          0
+        ],
+        [
+          10150,
+          0
+        ]
+      ]
+    }
+  }
+}

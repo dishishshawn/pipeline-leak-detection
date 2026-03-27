@@ -4,6 +4,7 @@ Pipeline Leak Detection - Streamlit Dashboard
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,33 @@ MODEL_DIR = Path("models")
 LIVE_MODEL_DATASET = "scada"
 LIVE_SCORE_LOOKBACK = 5
 LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
+LIVE_MODEL_ALLOWLIST = {
+    "Realtime Random Forest",
+    "Realtime Xgboost",
+    "Realtime Lightgbm",
+    "Realtime Hybrid Ensemble",
+}
+EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
+DEFAULT_ALERT_THRESHOLD = 0.5
+
+
+def _load_calibrated_thresholds() -> dict[str, float]:
+    """Load calibrated per-model thresholds from evaluation results if available."""
+    if EVAL_RESULTS_PATH.exists():
+        try:
+            data = json.loads(EVAL_RESULTS_PATH.read_text())
+            return data.get("calibrated_thresholds", {})
+        except Exception:
+            pass
+    return {}
+
+
+_CALIBRATED_THRESHOLDS = _load_calibrated_thresholds()
+
+
+def get_alert_threshold(model_name: str) -> float:
+    """Return the calibrated threshold for a model, or the default."""
+    return _CALIBRATED_THRESHOLDS.get(model_name, DEFAULT_ALERT_THRESHOLD)
 SEGMENT_PALETTE = [
     "#1f77b4",
     "#ff7f0e",
@@ -105,14 +133,18 @@ def _load_all_models(dataset_type: str) -> dict:
 
 
 def load_models(dataset_type: str = "scada") -> dict:
-    return {k: v[0] for k, v in _load_all_models(dataset_type).items()}
+    return {
+        k: v[0]
+        for k, v in _load_all_models(dataset_type).items()
+        if Path(v[1]).parent.name not in {"physics_sim"}
+    }
 
 
 def load_live_models(dataset_type: str = "scada") -> dict:
     return {
         k: v[0]
         for k, v in _load_all_models(dataset_type).items()
-        if Path(v[1]).parent.name in {"realtime", "robust"}
+        if k in LIVE_MODEL_ALLOWLIST
     }
 
 
@@ -730,7 +762,8 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
             title=f"Model Leak Score ({selected_live_model})",
             **segment_plot_args(scored_labeled),
         )
-        fig_score.add_hline(y=0.5, line_dash="dash", line_color="red", annotation_text="alert threshold")
+        _threshold = get_alert_threshold(selected_live_model)
+        fig_score.add_hline(y=_threshold, line_dash="dash", line_color="red", annotation_text=f"alert threshold ({_threshold:.2f})")
         fig_score.update_layout(height=320, margin=dict(t=35, b=25))
         if not markers.empty:
             score_markers = markers[["segment_id", "timestamp"]].copy()

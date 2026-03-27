@@ -69,9 +69,13 @@ def _infer_dataset_type(path: Path) -> str | None:
         return "scada"
     if stem.startswith("robust_realtime_"):
         return "scada"
+    if stem.startswith("physics_sim_"):
+        return "scada"
     if path.parent.name == "realtime":
         return "scada"
     if path.parent.name == "robust":
+        return "scada"
+    if path.parent.name == "physics_sim":
         return "scada"
     if path.parent.name == "advanced":
         return "scada"
@@ -86,15 +90,17 @@ def _artifact_priority(path: Path) -> int:
         return 0
     if path.parent.name == "realtime":
         return 1
-    if path.parent.name == "advanced":
+    if path.parent.name == "physics_sim":
         return 2
-    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
+    if path.parent.name == "advanced":
         return 3
-    if stem.startswith(("scada_pipeline_", "water_leak_")):
+    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
         return 4
-    if path.parent.name == "trained":
+    if stem.startswith(("scada_pipeline_", "water_leak_")):
         return 5
-    return 6
+    if path.parent.name == "trained":
+        return 6
+    return 7
 
 
 def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[str, ModelArtifact]:
@@ -104,22 +110,26 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
     Priority order:
     1. models/robust/*.joblib
     2. models/realtime/*.joblib
-    3. models/advanced/*.joblib
-    4. dataset-specific models/trained/<dataset>_*.joblib
-    5. dataset-specific models/trained/<dataset>_*.pkl
-    6. models/trained/*.joblib
-    7. models/*.joblib
+    3. models/physics_sim/*.joblib
+    4. models/advanced/*.joblib
+    5. dataset-specific models/trained/<dataset>_*.joblib
+    6. dataset-specific models/trained/<dataset>_*.pkl
+    7. models/trained/*.joblib
+    8. models/*.joblib
     """
     root = Path(model_dir)
     candidates = sorted(root.glob("*.joblib"))
     candidates += sorted((root / "trained").glob("*.joblib"))
     candidates += sorted((root / "trained").glob("*.pkl"))
     candidates += sorted((root / "advanced").glob("*.joblib"))
+    candidates += sorted((root / "physics_sim").glob("*.joblib"))
     candidates += sorted((root / "realtime").glob("*.joblib"))
     candidates += sorted((root / "robust").glob("*.joblib"))
 
     selected: dict[str, ModelArtifact] = {}
     for path in candidates:
+        if path.stem.endswith("_scaler"):
+            continue
         inferred_dataset = _infer_dataset_type(path)
         if inferred_dataset != dataset_type:
             continue

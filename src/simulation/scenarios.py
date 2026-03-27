@@ -223,6 +223,22 @@ def get_scenario_presets() -> tuple[ScenarioPreset, ...]:
                 ),
             ],
         ),
+        ScenarioPreset(
+            key="micro_leak",
+            label="Micro Leak",
+            description="Very subtle leak that barely crosses detection thresholds — tests early detection sensitivity.",
+            factory=lambda segment_ids: [
+                LeakProgressionScenario(
+                    start_step=15,
+                    ramp_steps=25,
+                    hold_steps=40,
+                    recovery_steps=20,
+                    max_severity=0.22,
+                    residual=0.1,
+                    affected_segments=[_primary_segment(segment_ids)],
+                ),
+            ],
+        ),
     )
 
 

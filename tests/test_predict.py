@@ -9,6 +9,7 @@ from src.models.predict import (
     supports_leak_score,
     supports_probability_scores,
 )
+from src.models.physics_wrapper import PhysicsModelWrapper
 
 
 LR_PATH = "models/logistic_regression.joblib"
@@ -103,6 +104,26 @@ class PredictOnlyClassifier:
         return np.array([0, 1, 1])
 
 
+class CaptureShapeClassifier:
+    classes_ = np.array([0, 1])
+
+    def __init__(self):
+        self.last_shape = None
+
+    def predict(self, X):
+        self.last_shape = np.asarray(X).shape
+        return np.zeros(len(X), dtype=int)
+
+    def predict_proba(self, X):
+        self.last_shape = np.asarray(X).shape
+        return np.column_stack([np.ones(len(X)), np.zeros(len(X))])
+
+
+class NegativeOneAnomalyClassifier:
+    def predict(self, X):
+        return np.array([-1, 1, -1])
+
+
 def test_predict_handles_legacy_tuple_model():
     model = (IdentityScaler(), ThresholdClassifier())
     X = pd.DataFrame({"a": [0.0, 1.0, 2.0]})
@@ -154,6 +175,38 @@ def test_predict_proba_falls_back_to_hard_predictions():
     proba = predict_proba(model, X)
     expected = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]])
     np.testing.assert_allclose(proba, expected)
+
+
+def test_physics_wrapper_emits_full_training_feature_schema_from_live_scada():
+    inner = CaptureShapeClassifier()
+    wrapper = PhysicsModelWrapper(inner)
+    X = pd.DataFrame(
+        {
+            "pressure": [70.0, 69.8, 69.5],
+            "flow_rate": [3.1, 3.0, 2.9],
+            "temperature": [24.0, 24.1, 24.2],
+        }
+    )
+
+    preds = predict(wrapper, X)
+
+    assert len(preds) == len(X)
+    assert inner.last_shape == (3, 27)
+
+
+def test_physics_wrapper_maps_isolation_style_predictions_to_binary_labels():
+    wrapper = PhysicsModelWrapper(NegativeOneAnomalyClassifier())
+    X = pd.DataFrame(
+        {
+            "pressure": [70.0, 69.8, 69.5],
+            "flow_rate": [3.1, 3.0, 2.9],
+            "temperature": [24.0, 24.1, 24.2],
+        }
+    )
+
+    preds = predict(wrapper, X)
+
+    np.testing.assert_array_equal(preds, np.array([1, 0, 1]))
 
 
 def test_support_helpers_distinguish_native_scores_from_fallbacks():

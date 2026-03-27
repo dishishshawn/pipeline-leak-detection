@@ -119,6 +119,61 @@ def encode_event_type(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_pressure_drop_consistency(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
+    """Deviation of pressure delta from its rolling mean — persistent negative = leak."""
+    df = df.copy()
+    df = df.sort_values(["segment_id", "timestamp"])
+    if "pressure_delta" not in df.columns:
+        return df
+    roll_mean = (
+        df.groupby("segment_id")["pressure_delta"]
+        .transform(lambda s: s.rolling(window=window, min_periods=1).mean())
+    )
+    df["pressure_delta_deviation"] = df["pressure_delta"] - roll_mean
+    return df
+
+
+def add_flow_imbalance_persistence(df: pd.DataFrame, window: int = 10) -> pd.DataFrame:
+    """Rolling count of consecutive negative flow deltas — sustained drop = leak."""
+    df = df.copy()
+    df = df.sort_values(["segment_id", "timestamp"])
+    if "flow_rate_delta" not in df.columns:
+        return df
+    negative_flag = (df["flow_rate_delta"] < -0.01).astype(int)
+    df["flow_neg_streak"] = (
+        negative_flag.groupby(df["segment_id"])
+        .transform(lambda s: s.rolling(window=window, min_periods=1).sum())
+    )
+    return df
+
+
+def add_segment_relative_deviation(df: pd.DataFrame) -> pd.DataFrame:
+    """Segment pressure/flow vs cross-segment mean at each timestamp — leak affects one segment more."""
+    df = df.copy()
+    if "timestamp" not in df.columns:
+        return df
+    ts_mean_pressure = df.groupby("timestamp")["pressure"].transform("mean")
+    df["pressure_segment_deviation"] = df["pressure"] - ts_mean_pressure
+    ts_mean_flow = df.groupby("timestamp")["flow_rate"].transform("mean")
+    df["flow_segment_deviation"] = df["flow_rate"] - ts_mean_flow
+    return df
+
+
+def add_change_over_baseline(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
+    """Deviation from long-window baseline — captures slow drift from normal."""
+    df = df.copy()
+    df = df.sort_values(["segment_id", "timestamp"])
+    for col, out_col in [("pressure", "pressure_baseline_dev"), ("flow_rate", "flow_baseline_dev")]:
+        if col not in df.columns:
+            continue
+        baseline = (
+            df.groupby("segment_id")[col]
+            .transform(lambda s: s.rolling(window=window, min_periods=1).mean())
+        )
+        df[out_col] = df[col] - baseline
+    return df
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Main feature engineering pipeline.
@@ -132,6 +187,12 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_rolling_flow_features(df, window=5)
     df = add_rolling_zscore_features(df)
     df = encode_event_type(df)
+
+    # Physics-informed features
+    df = add_pressure_drop_consistency(df)
+    df = add_flow_imbalance_persistence(df)
+    df = add_segment_relative_deviation(df)
+    df = add_change_over_baseline(df)
 
     logger.info("Feature engineering complete. Shape: %s", df.shape)
     return df
