@@ -317,10 +317,18 @@ def score_live_history(history: pd.DataFrame, model):
     ]
     available_columns = [column for column in result_columns if column in history.columns]
     result_df = history[available_columns].copy()
-    result_df["predicted"] = predict(model, X_live)
+    try:
+        result_df["predicted"] = predict(model, X_live)
+    except Exception as exc:
+        logger.warning("predict() failed in score_live_history: %s", exc)
+        result_df["predicted"] = 0
 
     if supports_leak_score(model):
-        result_df["leak_score"] = predict_leak_score(model, X_live).round(3)
+        try:
+            result_df["leak_score"] = predict_leak_score(model, X_live).round(3)
+        except Exception as exc:
+            logger.warning("predict_leak_score() failed in score_live_history: %s", exc)
+            result_df["leak_score"] = 0.0
 
     return history, result_df
 
@@ -510,7 +518,7 @@ def render_historical_tabs(
             labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_pressure, use_container_width=True)
+        st.plotly_chart(fig_pressure, width="stretch")
 
         st.subheader("Flow rate over time")
         fig_flow = px.line(
@@ -520,7 +528,7 @@ def render_historical_tabs(
             labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_flow, use_container_width=True)
+        st.plotly_chart(fig_flow, width="stretch")
 
         st.subheader("Leak events")
         leak_df = filtered_labeled[filtered_labeled["target"] == 1]
@@ -536,7 +544,7 @@ def render_historical_tabs(
                 title="Pressure at leak events",
                 **segment_plot_args(leak_df),
             )
-            st.plotly_chart(fig_leaks, use_container_width=True)
+            st.plotly_chart(fig_leaks, width="stretch")
 
     with tab_pred:
         if not models or selected_model_name not in models:
@@ -547,16 +555,25 @@ def render_historical_tabs(
             if X_all.empty:
                 st.warning("No feature data available after filtering.")
             else:
-                preds = predict(model, X_all)
-                result_df = filtered[
-                    ["timestamp", "segment_id", "pressure", "flow_rate", "target"]
-                ].copy()
-                result_df = result_df.iloc[: len(preds)].copy()
-                result_df["predicted"] = preds
+                try:
+                    preds = predict(model, X_all)
+                except Exception as exc:
+                    st.error(f"Prediction failed for {selected_model_name}: {exc}")
+                    preds = None
 
-                if supports_leak_score(model):
-                    scores = predict_leak_score(model, X_all)
-                    result_df["leak_score"] = scores.round(3)
+                if preds is not None:
+                    result_df = filtered[
+                        ["timestamp", "segment_id", "pressure", "flow_rate", "target"]
+                    ].copy()
+                    result_df = result_df.iloc[: len(preds)].copy()
+                    result_df["predicted"] = preds
+
+                    if supports_leak_score(model):
+                        try:
+                            scores = predict_leak_score(model, X_all)
+                            result_df["leak_score"] = scores.round(3)
+                        except Exception as exc:
+                            st.warning(f"Leak scoring failed: {exc}")
 
                     st.subheader("Leak probability scores")
                     result_labeled = with_segment_labels(result_df)
@@ -573,7 +590,7 @@ def render_historical_tabs(
                         line_color="red",
                         annotation_text="threshold",
                     )
-                    st.plotly_chart(fig_score, use_container_width=True)
+                    st.plotly_chart(fig_score, width="stretch")
                 else:
                     st.info("This model only produces class predictions, so leak scores are unavailable.")
 
@@ -583,7 +600,7 @@ def render_historical_tabs(
                         "leak_score" if "leak_score" in result_df.columns else "predicted",
                         ascending=False,
                     ).head(50),
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     with tab_eval:
@@ -597,14 +614,18 @@ def render_historical_tabs(
                     st.subheader(name)
                     col_left, col_right = st.columns(2)
 
-                    preds = predict(mdl, X_all)
+                    try:
+                        preds = predict(mdl, X_all)
+                    except Exception as exc:
+                        st.error(f"Prediction failed for {name}: {exc}")
+                        continue
                     report = classification_report_df(y_all, preds)
 
                     with col_left:
                         st.markdown("**Classification report**")
                         st.dataframe(
                             report.style.format("{:.3f}", na_rep="-"),
-                            use_container_width=True,
+                            width="stretch",
                         )
 
                     cm = confusion_matrix_df(y_all, preds)
@@ -616,10 +637,16 @@ def render_historical_tabs(
                             color_continuous_scale="Blues",
                             labels={"color": "Count"},
                         )
-                        st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{name}")
+                        st.plotly_chart(fig_cm, width="stretch", key=f"cm_{name}")
 
                     if supports_probability_scores(mdl):
-                        scores = predict_leak_score(mdl, X_all)
+                        try:
+                            scores = predict_leak_score(mdl, X_all)
+                        except Exception as exc:
+                            st.warning(f"Leak scoring failed for {name}: {exc}")
+                            scores = None
+                        if scores is None:
+                            continue
                         fpr, tpr, auc_score = roc_auc(y_all, scores)
                         fig_roc = go.Figure()
                         fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"AUC = {auc_score:.3f}"))
@@ -637,7 +664,7 @@ def render_historical_tabs(
                             yaxis_title="True Positive Rate",
                             height=350,
                         )
-                        st.plotly_chart(fig_roc, use_container_width=True, key=f"roc_{name}")
+                        st.plotly_chart(fig_roc, width="stretch", key=f"roc_{name}")
 
                     st.markdown("---")
 
@@ -755,7 +782,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         )
         fig_pressure.update_layout(height=320, margin=dict(t=35, b=25))
         add_ideal_detection_overlay(fig_pressure, markers, y_column="pressure", chart_name="Pressure")
-        st.plotly_chart(fig_pressure, use_container_width=True)
+        st.plotly_chart(fig_pressure, width="stretch")
 
     with chart_col2:
         fig_flow = px.line(
@@ -766,7 +793,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         )
         fig_flow.update_layout(height=320, margin=dict(t=35, b=25))
         add_ideal_detection_overlay(fig_flow, markers, y_column="flow_rate", chart_name="Flow")
-        st.plotly_chart(fig_flow, use_container_width=True)
+        st.plotly_chart(fig_flow, width="stretch")
 
     # ── Leak severity and temperature charts ──────────────────────────
     has_severity = "leak_severity" in history.columns and history["leak_severity"].max() > 0
@@ -783,7 +810,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
             fig_sev.add_hline(y=0.18, line_dash="dot", line_color="orange", annotation_text="warning")
             fig_sev.add_hline(y=0.55, line_dash="dot", line_color="red", annotation_text="alarm")
             fig_sev.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_sev, use_container_width=True)
+            st.plotly_chart(fig_sev, width="stretch")
         else:
             fig_temp = px.line(
                 sorted_history, x="timestamp", y="temperature",
@@ -792,7 +819,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 **seg_args,
             )
             fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_temp, use_container_width=True)
+            st.plotly_chart(fig_temp, width="stretch")
 
     with chart_col4:
         if has_severity:
@@ -803,7 +830,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 **seg_args,
             )
             fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_temp, use_container_width=True)
+            st.plotly_chart(fig_temp, width="stretch")
         else:
             fig_energy = px.line(
                 sorted_history, x="timestamp", y="energy_consumption",
@@ -812,7 +839,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 **seg_args,
             )
             fig_energy.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_energy, use_container_width=True)
+            st.plotly_chart(fig_energy, width="stretch")
 
     # ── Model leak score chart ────────────────────────────────────────
     if not scored.empty and "leak_score" in scored.columns:
@@ -853,7 +880,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                     y_column="leak_score",
                     chart_name="Leak score",
                 )
-        st.plotly_chart(fig_score, use_container_width=True)
+        st.plotly_chart(fig_score, width="stretch")
 
     # ── Telemetry & model tables ──────────────────────────────────────
     table_col1, table_col2 = st.columns(2)
@@ -866,7 +893,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     ]
     with table_col1:
         st.subheader("Latest telemetry")
-        st.dataframe(latest_rows[telemetry_cols], use_container_width=True, hide_index=True)
+        st.dataframe(latest_rows[telemetry_cols], width="stretch", hide_index=True)
 
     with table_col2:
         if latest_scored.empty:
@@ -880,7 +907,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 ] if c in latest_scored.columns
             ]
             st.subheader("Model output")
-            st.dataframe(latest_scored[visible_columns], use_container_width=True, hide_index=True)
+            st.dataframe(latest_scored[visible_columns], width="stretch", hide_index=True)
 
     with st.expander("Recent telemetry log", expanded=False):
         log_cols = [
@@ -891,7 +918,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
             ] if c in history.columns
         ]
         recent = history.sort_values("timestamp", ascending=False)[log_cols].head(40)
-        st.dataframe(recent, use_container_width=True, hide_index=True)
+        st.dataframe(recent, width="stretch", hide_index=True)
 
 
 ensure_live_state()
@@ -1023,7 +1050,7 @@ with live_tab:
     )
 
     button_col1, button_col2, button_col3 = st.columns(3)
-    if button_col1.button("Start / Resume", use_container_width=True):
+    if button_col1.button("Start / Resume", width="stretch"):
         simulator = st.session_state.get("live_simulator")
         if simulator is None or st.session_state.get("live_signature") != signature:
             simulator = build_live_simulator(
@@ -1041,13 +1068,13 @@ with live_tab:
         simulator.start()
         st.session_state["live_running"] = True
 
-    if button_col2.button("Pause", use_container_width=True):
+    if button_col2.button("Pause", width="stretch"):
         simulator = st.session_state.get("live_simulator")
         if simulator is not None:
             simulator.stop()
         st.session_state["live_running"] = False
 
-    if button_col3.button("Restart", use_container_width=True):
+    if button_col3.button("Restart", width="stretch"):
         simulator = build_live_simulator(
             selected_preset_key,
             segment_count,
@@ -1087,7 +1114,7 @@ with live_tab:
             key="manual_leak_segment",
         )
     with trigger_col3:
-        trigger_now = st.button("Start Leak Now", use_container_width=True)
+        trigger_now = st.button("Start Leak Now", width="stretch")
 
     if trigger_now:
         simulator = st.session_state.get("live_simulator")
