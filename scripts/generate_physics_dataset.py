@@ -69,6 +69,14 @@ def main() -> None:
     first_normal_raw = first_normal_df = first_normal_cfg = None
     first_leak_raw = first_leak_df = first_leak_cfg = None
 
+    # Validation tracking
+    do_validate = not args.no_validate
+    CRITICAL_CHECKS = {"no_nan_inf", "pressure_range", "flow_non_negative"}
+    validation_pass = 0
+    validation_warn = 0
+    validation_fail = 0
+    failed_scenarios: list[str] = []
+
     t_batch_start = time.time()
     for i, spec in enumerate(specs):
         t0 = time.time()
@@ -76,17 +84,44 @@ def main() -> None:
             sim = PipelineSimulator(spec.config)
             raw = sim.run()
             df = sim.measure(raw, scenario_id=spec.scenario_id)
-            all_dfs.append(df)
         except Exception as exc:
             log.warning("  [%d/%d] %s FAILED: %s", i + 1, len(specs), spec.scenario_id, exc)
+            validation_fail += 1
+            failed_scenarios.append(f"{spec.scenario_id}: simulation error — {exc}")
             continue
 
         elapsed = time.time() - t0
         tag = "LEAK" if spec.leak_exists else "NORM"
+
+        # -- Per-scenario validation -------------------------------------------
+        if do_validate:
+            checks = validate_physics(spec.config, raw, df)
+            critical_failures = [c for c in checks if not c["passed"] and c["name"] in CRITICAL_CHECKS]
+            warnings = [c for c in checks if not c["passed"] and c["name"] not in CRITICAL_CHECKS]
+
+            if critical_failures:
+                validation_fail += 1
+                for c in critical_failures:
+                    log.error("  [%d/%d] %s CRITICAL FAIL: %s — %s",
+                              i + 1, len(specs), spec.scenario_id, c["name"], c["detail"])
+                failed_scenarios.append(
+                    f"{spec.scenario_id}: {', '.join(c['name'] for c in critical_failures)}")
+                # Skip this scenario — data is untrustworthy
+                continue
+
+            if warnings:
+                validation_warn += 1
+                for c in warnings:
+                    log.warning("  [%d/%d] %s WARN: %s — %s",
+                                i + 1, len(specs), spec.scenario_id, c["name"], c["detail"])
+            else:
+                validation_pass += 1
+
+        all_dfs.append(df)
         log.info("  [%d/%d] %s (%s) — %.1fs, %d rows",
                  i + 1, len(specs), spec.scenario_id, tag, elapsed, len(df))
 
-        # Capture first of each type for validation / plots
+        # Capture first of each type for plots
         if not spec.leak_exists and first_normal_raw is None:
             first_normal_raw, first_normal_df, first_normal_cfg = raw, df, spec.config
         if spec.leak_exists and first_leak_raw is None:
@@ -114,16 +149,16 @@ def main() -> None:
         export_long_format(combined, out / "sensor_long_format.csv")
         log.info("Exported long CSV → %s", out / "sensor_long_format.csv")
 
-    # -- Validation --------------------------------------------------------
-    if not args.no_validate:
-        if first_normal_raw is not None:
-            log.info("Validation — first normal scenario:")
-            checks = validate_physics(first_normal_cfg, first_normal_raw, first_normal_df)
-            print_validation(checks)
-        if first_leak_raw is not None:
-            log.info("Validation — first leak scenario:")
-            checks = validate_physics(first_leak_cfg, first_leak_raw, first_leak_df)
-            print_validation(checks)
+    # -- Validation summary ------------------------------------------------
+    if do_validate:
+        log.info("=== VALIDATION SUMMARY ===")
+        log.info("  Passed:   %d / %d scenarios", validation_pass, len(specs))
+        log.info("  Warnings: %d", validation_warn)
+        log.info("  Failed:   %d", validation_fail)
+        if failed_scenarios:
+            log.warning("  Failed scenarios:")
+            for desc in failed_scenarios:
+                log.warning("    - %s", desc)
 
     # -- Plots -------------------------------------------------------------
     if not args.no_plots and first_normal_df is not None and first_leak_df is not None:
