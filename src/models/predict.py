@@ -131,8 +131,8 @@ def load_model(path: str):
     model = joblib.load(model_path)
     scaler, estimator = _split_model(model)
 
-    # Wrap physics_sim models to auto-engineer features from raw SCADA
-    if "physics_sim" in str(model_path):
+    # Wrap physics_sim and petrobras models to auto-engineer features from raw SCADA
+    if "physics_sim" in str(model_path) or "petrobras" in str(model_path):
         if scaler is None:
             scaler_path = model_path.with_name(f"{model_path.stem}_scaler{model_path.suffix}")
             if scaler_path.exists():

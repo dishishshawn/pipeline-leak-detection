@@ -1,0 +1,128 @@
+{
+  "dataset": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\data\\processed\\petrobras_3w\\petrobras_3w_scada.csv",
+  "dataset_type": "petrobras_3w",
+  "n_total": 294032,
+  "n_features": 27,
+  "feature_names": [
+    "P_inlet",
+    "P_mid",
+    "P_outlet",
+    "Q_inlet",
+    "Q_outlet",
+    "T_inlet",
+    "T_mid",
+    "T_outlet",
+    "P_drop_inlet_to_mid",
+    "P_drop_mid_to_outlet",
+    "P_drop_total",
+    "P_ratio_in_out",
+    "Q_imbalance",
+    "Q_imbalance_pct",
+    "Q_ratio",
+    "T_drop_inlet_to_outlet",
+    "T_gradient_per_km",
+    "P_inlet_rolling_mean_5",
+    "P_inlet_rolling_std_5",
+    "P_mid_rolling_mean_5",
+    "P_mid_rolling_std_5",
+    "P_outlet_rolling_mean_5",
+    "P_outlet_rolling_std_5",
+    "Q_inlet_rolling_mean_5",
+    "Q_inlet_rolling_std_5",
+    "Q_outlet_rolling_mean_5",
+    "Q_outlet_rolling_std_5"
+  ],
+  "label_distribution": {
+    "0": 37786,
+    "1": 256246
+  },
+  "test_split": 0.2,
+  "seed": 42,
+  "models": {
+    "logistic_regression": {
+      "roc_auc": 0.9721,
+      "accuracy": 0.9052,
+      "precision": 0.9983,
+      "recall": 0.8931,
+      "f1": 0.9428,
+      "confusion_matrix": [
+        [
+          3514,
+          37
+        ],
+        [
+          2635,
+          22003
+        ]
+      ]
+    },
+    "random_forest": {
+      "roc_auc": 0.9647,
+      "accuracy": 0.9632,
+      "precision": 0.9819,
+      "recall": 0.9759,
+      "f1": 0.9789,
+      "confusion_matrix": [
+        [
+          3107,
+          444
+        ],
+        [
+          594,
+          24044
+        ]
+      ]
+    },
+    "xgboost": {
+      "roc_auc": 0.9955,
+      "accuracy": 0.9626,
+      "precision": 0.9795,
+      "recall": 0.9776,
+      "f1": 0.9786,
+      "confusion_matrix": [
+        [
+          3047,
+          504
+        ],
+        [
+          551,
+          24087
+        ]
+      ]
+    },
+    "lightgbm": {
+      "roc_auc": 0.9937,
+      "accuracy": 0.9579,
+      "precision": 0.9742,
+      "recall": 0.9778,
+      "f1": 0.976,
+      "confusion_matrix": [
+        [
+          2912,
+          639
+        ],
+        [
+          548,
+          24090
+        ]
+      ]
+    },
+    "isolation_forest": {
+      "roc_auc": 0.4136,
+      "accuracy": 0.126,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": [
+        [
+          3551,
+          0
+        ],
+        [
+          24638,
+          0
+        ]
+      ]
+    }
+  }
+}

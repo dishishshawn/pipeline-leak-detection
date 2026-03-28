@@ -71,6 +71,10 @@ def _infer_dataset_type(path: Path) -> str | None:
         return "scada"
     if stem.startswith("physics_sim_"):
         return "scada"
+    if stem.startswith("petrobras_"):
+        return "scada"
+    if path.parent.name == "petrobras":
+        return "scada"
     if path.parent.name == "realtime":
         return "scada"
     if path.parent.name == "robust":
@@ -90,17 +94,19 @@ def _artifact_priority(path: Path) -> int:
         return 0
     if path.parent.name == "realtime":
         return 1
-    if path.parent.name == "physics_sim":
+    if path.parent.name == "petrobras":
         return 2
-    if path.parent.name == "advanced":
+    if path.parent.name == "physics_sim":
         return 3
-    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
+    if path.parent.name == "advanced":
         return 4
-    if stem.startswith(("scada_pipeline_", "water_leak_")):
+    if stem.startswith(("scada_pipeline_", "water_leak_")) and path.suffix == ".joblib":
         return 5
-    if path.parent.name == "trained":
+    if stem.startswith(("scada_pipeline_", "water_leak_")):
         return 6
-    return 7
+    if path.parent.name == "trained":
+        return 7
+    return 8
 
 
 def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[str, ModelArtifact]:
@@ -123,6 +129,7 @@ def discover_model_artifacts(model_dir: str | Path, dataset_type: str) -> dict[s
     candidates += sorted((root / "trained").glob("*.pkl"))
     candidates += sorted((root / "advanced").glob("*.joblib"))
     candidates += sorted((root / "physics_sim").glob("*.joblib"))
+    candidates += sorted((root / "petrobras").glob("*.joblib"))
     candidates += sorted((root / "realtime").glob("*.joblib"))
     candidates += sorted((root / "robust").glob("*.joblib"))
 

@@ -119,11 +119,12 @@ def predict(model, df):
 ### Model Artifact Discovery
 
 `src/models/artifacts.py` scans directories with priority:
-1. `models/realtime/` (priority 0 — preferred for live)
-2. `models/physics_sim/` (priority 2)
-3. `models/advanced/` (priority 3)
-4. `models/robust/` (priority 1)
-5. `models/trained/` (priority 4)
+1. `models/robust/` (priority 0)
+2. `models/realtime/` (priority 1 — preferred for live)
+3. `models/petrobras/` (priority 2 — real oil well data)
+4. `models/physics_sim/` (priority 3)
+5. `models/advanced/` (priority 4)
+6. `models/trained/` (priority 5+)
 
 ### Alert System
 
@@ -188,6 +189,9 @@ Real oil well telemetry from Petrobras (~1,984 parquet files, ~1.8 GB). NOT in g
 - **Processed output:** `data/processed/petrobras_3w/petrobras_3w_scada.csv` (gitignored)
 - **Column mapping:** P-PDG → P_inlet, P-TPT → P_mid, P-MON-CKP → P_outlet, T-PDG → T_inlet, T-TPT → T_mid, QGL → Q_inlet
 - **Label mapping:** Event 0 = normal (target=0), Events 1-9 = anomaly/fault (target=1)
+- **Training script:** `scripts/train_petrobras_models.py` (27 physics-style features)
+- **Trained models:** `models/petrobras/petrobras_*.joblib` (auto-wrapped in PhysicsModelWrapper)
+- **Best result:** XGBoost ROC-AUC 0.9955, F1 0.979 (on 50-file subset)
 - **Config entry:** `config/datasets.yaml` lines 170-208
 
 ## Known Issues / Gotchas
