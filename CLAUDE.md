@@ -20,7 +20,8 @@ python tasks.py physics-all   # Generate physics data + train models
 python tasks.py realtime-all  # Generate realtime data + train models
 python tasks.py eval          # Evaluate models + calibrate thresholds
 python tasks.py pipeline-full # Train everything + evaluate
-python tasks.py --list        # Show all 24 tasks
+python tasks.py petrobras-download  # Download Petrobras 3W real data (~1.8 GB)
+python tasks.py --list        # Show all 26 tasks
 ```
 
 ## Directory Structure
@@ -64,6 +65,7 @@ scripts/
   run_eda.py                     Exploratory data analysis
   run_benchmark.py               Baseline benchmarks
   download_data.py               Kaggle dataset download
+  download_petrobras_3w.py       Download & process Petrobras 3W (real oil well data)
 
 src/
   data/                    Loaders, adapters, dataset registry, robust corpus
@@ -176,6 +178,17 @@ All predict calls are wrapped in try/except to prevent crashes. Uses `width="str
 - 27 features from raw SCADA columns (P_inlet, P_mid, P_outlet, Q_inlet, Q_outlet, T_*)
 - Pressure deltas, flow imbalance ratio, temperature gradient
 - Rolling mean/std (window=5)
+
+### Petrobras 3W Dataset
+
+Real oil well telemetry from Petrobras (~1,984 parquet files, ~1.8 GB). NOT in git — team members run `python tasks.py petrobras-download` to get it locally.
+
+- **Download script:** `scripts/download_petrobras_3w.py`
+- **Raw data:** `data/raw/petrobras_3w/3W/` (gitignored)
+- **Processed output:** `data/processed/petrobras_3w/petrobras_3w_scada.csv` (gitignored)
+- **Column mapping:** P-PDG → P_inlet, P-TPT → P_mid, P-MON-CKP → P_outlet, T-PDG → T_inlet, T-TPT → T_mid, QGL → Q_inlet
+- **Label mapping:** Event 0 = normal (target=0), Events 1-9 = anomaly/fault (target=1)
+- **Config entry:** `config/datasets.yaml` lines 170-208
 
 ## Known Issues / Gotchas
 

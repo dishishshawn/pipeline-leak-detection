@@ -31,7 +31,7 @@ install: ## Install all dependencies from requirements.txt
 
 # ── Data Pipeline ─────────────────────────────────────────────────────────────
 
-.PHONY: data-download data-eda data-benchmark
+.PHONY: data-download data-eda data-benchmark petrobras-download petrobras-quick
 
 data-download: ## Download Phase 1 datasets via Kaggle API
 	$(PYTHON) scripts/download_data.py --datasets scada_pipeline water_leak
@@ -41,6 +41,12 @@ data-eda: ## Run exploratory data analysis on Phase 1 datasets
 
 data-benchmark: ## Run baseline benchmarks on Phase 1 datasets
 	$(PYTHON) scripts/run_benchmark.py --datasets scada_pipeline water_leak --window 5
+
+petrobras-download: ## Download & process Petrobras 3W dataset (~1.8 GB)
+	$(PYTHON) scripts/download_petrobras_3w.py
+
+petrobras-quick: ## Download & process Petrobras 3W (100 files only)
+	$(PYTHON) scripts/download_petrobras_3w.py --max-files 100
 
 # ── Physics Simulator ─────────────────────────────────────────────────────────
 

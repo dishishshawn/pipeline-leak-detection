@@ -119,6 +119,27 @@ Those external sources are integrated with explicit intended roles:
 
 For non-Kaggle sources, `python scripts/download_data.py --datasets <name>` now creates the expected raw-data directory and prints the upstream source URL so you can drop the files into the correct place.
 
+### Petrobras 3W Dataset (Real Oil Well Telemetry)
+
+The [Petrobras 3W dataset](https://github.com/petrobras/3W) contains ~1,984 parquet files (~1.8 GB) of real oil well telemetry from Petrobras. It includes 10 event types (normal operation + 9 fault categories including hydrates, slugging, BSW increase, etc.) recorded at 1 Hz from downhole and Xmas-tree sensors.
+
+**The raw data is NOT checked into git** (`data/raw/` is gitignored). To download and process it locally:
+
+```bash
+python tasks.py petrobras-download      # Full dataset (~1.8 GB, takes a few minutes)
+python tasks.py petrobras-quick          # Quick test with 100 files only
+python scripts/download_petrobras_3w.py --skip-download  # Rebuild CSV from existing files
+```
+
+This will:
+1. Clone the 3W repo to `data/raw/petrobras_3w/3W/` (git depth=1)
+2. Map 3W sensor columns to our SCADA schema (P-PDG → P_inlet, P-TPT → P_mid, T-PDG → T_inlet, QGL → Q_inlet)
+3. Map events 1-9 to target=1 (anomaly) and event 0 to target=0 (normal)
+4. Downsample from 1 Hz to 0.1 Hz for manageable size
+5. Export to `data/processed/petrobras_3w/petrobras_3w_scada.csv`
+
+**You do NOT need this dataset to run the dashboard or train models.** The simulator and existing sample data are sufficient for development. The 3W data is for training higher-quality models on real-world sensor distributions.
+
 The training code is config-driven, so replacing `data.path` in the YAML configs is the intended way to retrain on newer, higher-quality datasets later.
 
 ## Core Pipeline

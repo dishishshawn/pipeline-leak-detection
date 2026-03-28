@@ -73,6 +73,16 @@ def data_benchmark():
     run(PYTHON, "scripts/run_benchmark.py", "--datasets", "scada_pipeline", "water_leak", "--window", "5")
 
 
+@task("petrobras-download", "Download & process Petrobras 3W dataset (~1.8 GB)")
+def petrobras_download():
+    run(PYTHON, "scripts/download_petrobras_3w.py")
+
+
+@task("petrobras-quick", "Download & process Petrobras 3W (100 files only, for quick test)")
+def petrobras_quick():
+    run(PYTHON, "scripts/download_petrobras_3w.py", "--max-files", "100")
+
+
 # ── Physics Simulator ────────────────────────────────────────────────────────
 
 @task("physics-generate", "Generate physics-based synthetic SCADA dataset (200 scenarios)")
@@ -231,7 +241,7 @@ def print_help():
     # Group tasks by category
     categories = {
         "Setup":      ["install"],
-        "Data":       ["data-download", "data-eda", "data-benchmark"],
+        "Data":       ["data-download", "data-eda", "data-benchmark", "petrobras-download", "petrobras-quick"],
         "Physics":    ["physics-generate", "physics-train", "physics-validate", "physics-all"],
         "Realtime":   ["realtime-generate", "realtime-train", "realtime-all"],
         "Robust":     ["robust-corpus", "robust-train", "robust-all"],
