@@ -922,6 +922,21 @@ except Exception as exc:
 segments = sorted(df["segment_id"].unique())
 selected_segments = st.sidebar.multiselect("Segments", segments, default=segments)
 
+min_ts = df["timestamp"].min()
+max_ts = df["timestamp"].max()
+date_range = st.sidebar.date_input(
+    "Date range",
+    value=(min_ts.date(), max_ts.date()),
+    min_value=min_ts.date(),
+    max_value=max_ts.date(),
+)
+
+filtered = df[df["segment_id"].isin(selected_segments)]
+if len(date_range) == 2:
+    filtered = filtered[
+        (filtered["timestamp"].dt.date >= date_range[0])
+        & (filtered["timestamp"].dt.date <= date_range[1])
+    ]
 
 try:
     models = load_models(dataset_type)
