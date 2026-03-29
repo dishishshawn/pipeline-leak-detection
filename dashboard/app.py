@@ -765,7 +765,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
                 st.caption("🚨 MODEL ALERT")
 
     # ── Summary metrics row ───────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Rows emitted", f"{len(history):,}")
     active_leaks = int(latest_rows["target"].sum())
     m2.metric("Active leaks", active_leaks, delta=f"{active_leaks}" if active_leaks > 0 else None, delta_color="inverse")
@@ -773,6 +773,15 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     m3.metric("Max leak severity", f"{max_severity:.0%}")
     min_eff = latest_rows["pump_efficiency"].min() if "pump_efficiency" in latest_rows.columns else 1.0
     m4.metric("Min pump efficiency", f"{min_eff:.0%}")
+
+    # False detections: model predicted leak (alert or predicted=1) but target=0
+    false_detections = 0
+    if not scored.empty and "target" in scored.columns:
+        if "model_alert" in scored.columns:
+            false_detections = int(((scored["model_alert"] == True) & (scored["target"] == 0)).sum())
+        elif "predicted" in scored.columns:
+            false_detections = int(((scored["predicted"] == 1) & (scored["target"] == 0)).sum())
+    m5.metric("False detections", false_detections, delta=f"{false_detections}" if false_detections > 0 else None, delta_color="inverse")
 
     if not markers.empty:
         st.caption("Red diamond markers = idealized earliest detection point for a strong model.")
