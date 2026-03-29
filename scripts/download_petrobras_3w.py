@@ -84,6 +84,41 @@ EVENT_NAMES = {
     9: "HYDRATE_IN_SERVICE_LINE",
 }
 
+SENSOR_BOUNDS = {
+    "P_": (-1e6, 1e9),
+    "T_": (-100.0, 500.0),
+    "Q_": (-1e3, 1e3),
+}
+
+
+def normalize_event_class(value: object) -> int:
+    """Map 3W class variants like 101-109 back to their base event ids."""
+    try:
+        event_class = int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+    if event_class in EVENT_NAMES:
+        return event_class
+
+    reduced = event_class % 100
+    if event_class >= 100 and reduced in EVENT_NAMES:
+        return reduced
+
+    return event_class
+
+
+def sanitize_sensor_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace impossible sensor sentinels with NaN before interpolation/fill."""
+    df = df.copy()
+    for prefix, (lower, upper) in SENSOR_BOUNDS.items():
+        for col in [c for c in df.columns if c.startswith(prefix)]:
+            values = pd.to_numeric(df[col], errors="coerce")
+            values = values.mask(~np.isfinite(values))
+            values = values.mask((values < lower) | (values > upper))
+            df[col] = values
+    return df
+
 
 def download_3w(max_files: int | None = None) -> None:
     """Clone the 3W dataset from GitHub (dataset directory only)."""
@@ -175,12 +210,12 @@ def load_and_process_file(path: Path) -> pd.DataFrame | None:
 
     # Extract class/label
     if "class" in result.columns:
-        result["event_class"] = result["class"].fillna(0).astype(int)
+        result["event_class"] = result["class"].apply(normalize_event_class)
         result.drop(columns=["class"], inplace=True)
     else:
         # Infer from directory name
         try:
-            result["event_class"] = int(event_dir)
+            result["event_class"] = normalize_event_class(event_dir)
         except ValueError:
             result["event_class"] = 0
 
@@ -192,6 +227,8 @@ def load_and_process_file(path: Path) -> pd.DataFrame | None:
     for old_name, new_name in COLUMN_RENAME.items():
         if old_name in result.columns:
             result.rename(columns={old_name: new_name}, inplace=True)
+
+    result = sanitize_sensor_columns(result)
 
     # Add metadata
     result["well_id"] = well_id
@@ -222,9 +259,9 @@ def build_processed_dataset(files: list[Path], downsample_step: int = 10) -> pd.
 
         all_dfs.append(df)
 
-        # Track event distribution
-        event_type = df["event_type"].iloc[0] if not df.empty else "UNKNOWN"
-        event_counts[event_type] = event_counts.get(event_type, 0) + len(df)
+        # Track the actual row-level event distribution within each file.
+        for event_type, count in df["event_type"].value_counts().items():
+            event_counts[event_type] = event_counts.get(event_type, 0) + int(count)
 
         if (i + 1) % 100 == 0:
             log.info("  Processed %d / %d files (%.0fs elapsed)",

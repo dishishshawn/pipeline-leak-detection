@@ -1,7 +1,7 @@
 {
   "dataset": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\data\\processed\\petrobras_3w\\petrobras_3w_scada.csv",
   "dataset_type": "petrobras_3w",
-  "n_total": 294032,
+  "n_total": 2560071,
   "n_features": 27,
   "feature_names": [
     "P_inlet",
@@ -33,93 +33,93 @@
     "Q_outlet_rolling_std_5"
   ],
   "label_distribution": {
-    "0": 37786,
-    "1": 256246
+    "0": 373860,
+    "1": 2186211
   },
   "test_split": 0.2,
   "seed": 42,
   "models": {
     "logistic_regression": {
-      "roc_auc": 0.9721,
-      "accuracy": 0.9052,
-      "precision": 0.9983,
-      "recall": 0.8931,
-      "f1": 0.9428,
+      "roc_auc": 0.8077,
+      "accuracy": 0.6369,
+      "precision": 0.9281,
+      "recall": 0.6179,
+      "f1": 0.7419,
       "confusion_matrix": [
         [
-          3514,
-          37
+          60156,
+          21115
         ],
         [
-          2635,
-          22003
+          168581,
+          272611
         ]
       ]
     },
     "random_forest": {
-      "roc_auc": 0.9647,
-      "accuracy": 0.9632,
-      "precision": 0.9819,
-      "recall": 0.9759,
-      "f1": 0.9789,
+      "roc_auc": 0.9418,
+      "accuracy": 0.9119,
+      "precision": 0.9649,
+      "recall": 0.9295,
+      "f1": 0.9469,
       "confusion_matrix": [
         [
-          3107,
-          444
+          66347,
+          14924
         ],
         [
-          594,
-          24044
+          31108,
+          410084
         ]
       ]
     },
     "xgboost": {
-      "roc_auc": 0.9955,
-      "accuracy": 0.9626,
-      "precision": 0.9795,
-      "recall": 0.9776,
-      "f1": 0.9786,
+      "roc_auc": 0.9386,
+      "accuracy": 0.8976,
+      "precision": 0.9389,
+      "recall": 0.9399,
+      "f1": 0.9394,
       "confusion_matrix": [
         [
-          3047,
-          504
+          54285,
+          26986
         ],
         [
-          551,
-          24087
+          26512,
+          414680
         ]
       ]
     },
     "lightgbm": {
-      "roc_auc": 0.9937,
-      "accuracy": 0.9579,
-      "precision": 0.9742,
-      "recall": 0.9778,
-      "f1": 0.976,
+      "roc_auc": 0.9425,
+      "accuracy": 0.8819,
+      "precision": 0.9347,
+      "recall": 0.9247,
+      "f1": 0.9297,
       "confusion_matrix": [
         [
-          2912,
-          639
+          52789,
+          28482
         ],
         [
-          548,
-          24090
+          33242,
+          407950
         ]
       ]
     },
     "isolation_forest": {
-      "roc_auc": 0.4136,
-      "accuracy": 0.126,
+      "roc_auc": 0.3832,
+      "accuracy": 0.1556,
       "precision": 0.0,
       "recall": 0.0,
       "f1": 0.0,
       "confusion_matrix": [
         [
-          3551,
+          81271,
           0
         ],
         [
-          24638,
+          441192,
           0
         ]
       ]

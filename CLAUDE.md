@@ -21,6 +21,7 @@ python tasks.py realtime-all  # Generate realtime data + train models
 python tasks.py eval          # Evaluate models + calibrate thresholds
 python tasks.py pipeline-full # Train everything + evaluate
 python tasks.py petrobras-download  # Download Petrobras 3W real data (~1.8 GB)
+python scripts/download_petrobras_3w.py --skip-download --max-files 500  # Rebuild a medium 3W training slice
 python tasks.py --list        # Show all 26 tasks
 ```
 
@@ -182,16 +183,19 @@ All predict calls are wrapped in try/except to prevent crashes. Uses `width="str
 
 ### Petrobras 3W Dataset
 
-Real oil well telemetry from Petrobras (~1,984 parquet files, ~1.8 GB). NOT in git — team members run `python tasks.py petrobras-download` to get it locally.
+Real oil well telemetry from Petrobras (~2,228 parquet files locally after download, ~1.8 GB). NOT in git — team members run `python tasks.py petrobras-download` to get it locally.
 
 - **Download script:** `scripts/download_petrobras_3w.py`
 - **Raw data:** `data/raw/petrobras_3w/3W/` (gitignored)
 - **Processed output:** `data/processed/petrobras_3w/petrobras_3w_scada.csv` (gitignored)
 - **Column mapping:** P-PDG → P_inlet, P-TPT → P_mid, P-MON-CKP → P_outlet, T-PDG → T_inlet, T-TPT → T_mid, QGL → Q_inlet
-- **Label mapping:** Event 0 = normal (target=0), Events 1-9 = anomaly/fault (target=1)
+- **Label mapping:** Event 0 = normal (target=0), Events 1-9 = anomaly/fault (target=1), and 100-series variants like 101-109 are normalized back to 1-9 during processing
+- **Sensor cleanup:** impossible sentinels like `-1e42` pressure or `-1e38` temperature are scrubbed to NaN before fill/interpolation
 - **Training script:** `scripts/train_petrobras_models.py` (27 physics-style features)
 - **Trained models:** `models/petrobras/petrobras_*.joblib` (auto-wrapped in PhysicsModelWrapper)
-- **Best result:** XGBoost ROC-AUC 0.9955, F1 0.979 (on 50-file subset)
+- **Current medium run:** `--max-files 500` sampled 484 files -> 2,560,071 rows, 218 wells, 484 scenarios
+- **Best current result:** LightGBM ROC-AUC 0.9425, F1 0.9297 (500-file rebuild on March 29, 2026)
+- **Previous small-sample result:** XGBoost ROC-AUC 0.9955, F1 0.9786 (50-file subset; likely optimistic versus the broader corpus)
 - **Config entry:** `config/datasets.yaml` lines 170-208
 
 ## Known Issues / Gotchas
@@ -202,6 +206,7 @@ Real oil well telemetry from Petrobras (~1,984 parquet files, ~1.8 GB). NOT in g
 4. **Isolation Forest ROC-AUC is ~0.26** — Expected for unsupervised anomaly detection; sigmoid transform of score_samples doesn't align with binary labels.
 5. **Multiple Streamlit instances** — Old instances may linger on ports 8501-8503. Kill them before starting on 8510.
 6. **Windows encoding** — Use ASCII in print statements, not Unicode symbols (epsilon, checkmark). Windows cp1252 will throw UnicodeEncodeError.
+7. **Petrobras 3W has dirty raw values** — Some files contain 100-series class labels and extreme sensor sentinels. Rebuild `data/processed/petrobras_3w/petrobras_3w_scada.csv` with the current script before trusting older Petrobras model metrics.
 
 ## Tech Stack
 

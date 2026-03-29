@@ -59,6 +59,54 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT = ROOT / "data" / "processed" / "petrobras_3w" / "petrobras_3w_scada.csv"
 DEFAULT_OUTPUT = ROOT / "models" / "petrobras"
+FEATURE_CLIP_LIMIT = 1e9
+RATIO_CLIP_LIMIT = 1e3
+PERCENT_CLIP_LIMIT = 1e4
+SENSOR_BOUNDS = {
+    "P_": (-1e6, 1e9),
+    "T_": (-100.0, 500.0),
+    "Q_": (-1e3, 1e3),
+}
+
+
+def sanitize_sensor_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize impossible raw sensor readings before feature engineering."""
+    df = df.copy()
+    for prefix, (lower, upper) in SENSOR_BOUNDS.items():
+        for col in [c for c in df.columns if c.startswith(prefix)]:
+            values = pd.to_numeric(df[col], errors="coerce")
+            values = values.mask(~np.isfinite(values))
+            values = values.mask((values < lower) | (values > upper))
+            df[col] = values
+    return df
+
+
+def safe_divide(
+    numerator: pd.Series,
+    denominator: pd.Series,
+    *,
+    epsilon: float = 1e-3,
+    clip: float | None = None,
+) -> pd.Series:
+    """Divide with stable denominators and optional clipping."""
+    num = pd.to_numeric(numerator, errors="coerce").fillna(0.0)
+    den = pd.to_numeric(denominator, errors="coerce").fillna(0.0)
+
+    stabilized = den.where(den.abs() >= epsilon, np.where(den < 0, -epsilon, epsilon))
+    result = num / stabilized
+    result = result.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    if clip is not None:
+        result = result.clip(-clip, clip)
+    return result
+
+
+def sanitize_feature_matrix(features: pd.DataFrame) -> pd.DataFrame:
+    """Make the feature matrix safe for large scikit-learn tree training runs."""
+    features = features.apply(pd.to_numeric, errors="coerce")
+    features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.bfill().ffill().fillna(0.0)
+    features = features.clip(lower=-FEATURE_CLIP_LIMIT, upper=FEATURE_CLIP_LIMIT)
+    return features.astype(np.float32)
 
 
 def engineer_features(df: pd.DataFrame, window: int = 5) -> tuple[pd.DataFrame, np.ndarray]:
@@ -70,7 +118,7 @@ def engineer_features(df: pd.DataFrame, window: int = 5) -> tuple[pd.DataFrame, 
     Returns:
         (features_df, labels) where features_df has 27 columns and labels are 0/1
     """
-    df = df.copy()
+    df = sanitize_sensor_frame(df)
 
     # 3W uses 'target' column (0=normal, 1=anomaly)
     if "target" not in df.columns:
@@ -105,14 +153,24 @@ def engineer_features(df: pd.DataFrame, window: int = 5) -> tuple[pd.DataFrame, 
     features["P_drop_inlet_to_mid"] = features["P_inlet"] - features["P_mid"]
     features["P_drop_mid_to_outlet"] = features["P_mid"] - features["P_outlet"]
     features["P_drop_total"] = features["P_inlet"] - features["P_outlet"]
-    features["P_ratio_in_out"] = features["P_inlet"] / (features["P_outlet"] + 1e-6)
+    features["P_ratio_in_out"] = safe_divide(
+        features["P_inlet"],
+        features["P_outlet"],
+        clip=RATIO_CLIP_LIMIT,
+    )
 
     # -- Flow balance (3 columns) --
     features["Q_imbalance"] = features["Q_inlet"] - features["Q_outlet"]
-    features["Q_imbalance_pct"] = (
-        100 * features["Q_imbalance"] / (features["Q_inlet"] + 1e-6)
+    features["Q_imbalance_pct"] = safe_divide(
+        100 * features["Q_imbalance"],
+        features["Q_inlet"],
+        clip=PERCENT_CLIP_LIMIT,
     )
-    features["Q_ratio"] = features["Q_inlet"] / (features["Q_outlet"] + 1e-6)
+    features["Q_ratio"] = safe_divide(
+        features["Q_inlet"],
+        features["Q_outlet"],
+        clip=RATIO_CLIP_LIMIT,
+    )
 
     # -- Temperature gradient (2 columns) --
     features["T_drop_inlet_to_outlet"] = features["T_inlet"] - features["T_outlet"]
@@ -142,11 +200,7 @@ def engineer_features(df: pd.DataFrame, window: int = 5) -> tuple[pd.DataFrame, 
             features[mean_col] = features[col].rolling(window=window, min_periods=1).mean()
             features[std_col] = features[col].rolling(window=window, min_periods=1).std().fillna(0)
 
-    # Fill remaining NaN
-    features = features.bfill().ffill().fillna(0)
-
-    # Replace inf with large finite values
-    features = features.replace([np.inf, -np.inf], 0.0)
+    features = sanitize_feature_matrix(features)
 
     labels = df["target"].values.astype(int)
     return features, labels
