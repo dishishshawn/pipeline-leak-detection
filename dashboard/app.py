@@ -58,6 +58,15 @@ LIVE_MODEL_ALLOWLIST = {
     "Realtime Xgboost",
     "Realtime Lightgbm",
     "Realtime Hybrid Ensemble",
+    "Petrobras Random Forest",
+    "Petrobras Xgboost",
+    "Petrobras Lightgbm",
+    "Petrobras Logistic Regression",
+    "Petrobras Isolation Forest",
+    "Physics Sim Random Forest",
+    "Physics Sim Xgboost",
+    "Physics Sim Lightgbm",
+    "Physics Sim Logistic Regression",
 }
 EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
 DEFAULT_ALERT_THRESHOLD = 0.5
@@ -1032,7 +1041,7 @@ with live_tab:
             options=list(live_models.keys()) if live_models else ["No realtime models found"],
             key="live_model_name",
         )
-        st.caption("Live simulator scoring is limited to live-safe models from models/realtime and models/robust.")
+        st.caption("Live simulator scoring is limited to live-safe models from models/realtime, models/petrobras, and models/physics_sim.")
         st.markdown("**Preset description**")
         selected_preset_key = next(
             preset.key for preset in preset_definitions if preset.label == preset_label
