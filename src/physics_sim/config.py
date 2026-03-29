@@ -23,7 +23,7 @@ class PipeConfig:
     """Pipeline segment geometry and wall properties."""
 
     length: float = 10_000.0        # m  (10 km)
-    diameter: float = 0.3048        # m  (12 in)
+    diameter: float = 0.508         # m  (20 in, subsea flowline)
     roughness: float = 4.6e-5       # m  (commercial steel)
     wall_thickness: float = 0.0095  # m  (~3/8 in)
     n_cells: int = 10               # spatial discretisation cells
@@ -86,8 +86,8 @@ class BoundaryConfig:
     outlet pressure (higher demand -> lower outlet pressure).
     """
 
-    inlet_pressure: float = 5.0e6   # Pa  (50 bar / ~725 psi)
-    outlet_pressure: float = 2.0e6  # Pa  (20 bar / ~290 psi)
+    inlet_pressure: float = 20.0e6  # Pa  (200 bar / ~2900 psi, subsea well)
+    outlet_pressure: float = 8.0e6  # Pa  (80 bar / ~1160 psi)
     demand_amplitude: float = 0.05  # fraction of outlet pressure
     demand_period: float = 3600.0   # s   (1-hour cycle)
 
@@ -126,10 +126,10 @@ class SensorConfig:
     labels: list[str] = field(
         default_factory=lambda: ["inlet", "mid", "outlet"]
     )
-    pressure_noise_std: float = 5_000.0   # Pa  (~0.05 bar)
-    flow_noise_std: float = 0.000_5       # m^3/s
-    temperature_noise_std: float = 0.1    # K
-    sampling_interval: float = 5.0        # s
+    pressure_noise_std: float = 20_000.0   # Pa  (~0.2 bar, realistic for subsea)
+    flow_noise_std: float = 0.005         # m^3/s
+    temperature_noise_std: float = 0.2    # deg-C
+    sampling_interval: float = 10.0       # s  (matches Petrobras 3W cadence)
     lag_time_constant: float = 2.0        # s  (first-order sensor lag)
 
 
@@ -146,9 +146,9 @@ class TemperatureConfig:
     producing a physically meaningful detection signal.
     """
 
-    inlet_temperature: float = 313.15       # K  (40 deg-C)
-    ground_temperature: float = 288.15      # K  (15 deg-C)
-    thermal_decay_length: float = 20_000.0  # m  (at nominal flow)
+    inlet_temperature: float = 313.15       # K  (40 deg-C) — internal solver uses K
+    ground_temperature: float = 288.15      # K  (15 deg-C) — internal solver uses K
+    thermal_decay_length: float = 50_000.0  # m  (at nominal flow, calibrated to 3W T_mid)
 
 
 # ---------------------------------------------------------------------------

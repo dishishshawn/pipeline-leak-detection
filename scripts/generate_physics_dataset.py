@@ -40,8 +40,8 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate physics-based pipeline dataset")
-    ap.add_argument("--n-normal", type=int, default=25, help="Number of normal scenarios")
-    ap.add_argument("--n-leak", type=int, default=25, help="Number of leak scenarios")
+    ap.add_argument("--n-normal", type=int, default=250, help="Number of normal scenarios")
+    ap.add_argument("--n-leak", type=int, default=250, help="Number of leak scenarios")
     ap.add_argument("--duration", type=float, default=1800.0, help="Scenario duration in seconds")
     ap.add_argument("--output", type=str, default="data/physics_sim", help="Output directory")
     ap.add_argument("--no-validate", action="store_true", help="Skip validation checks")

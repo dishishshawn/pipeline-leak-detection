@@ -69,7 +69,7 @@ def validate_physics(
 
     # 5. Pressure range physically reasonable
     P_min, P_max = float(P.min()), float(P.max())
-    ok = P_min > 0.0 and P_max < 20.0e6
+    ok = P_min > 0.0 and P_max < 50.0e6
     checks.append({
         "name": "pressure_range",
         "passed": ok,

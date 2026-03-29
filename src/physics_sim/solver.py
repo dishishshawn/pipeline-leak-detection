@@ -282,6 +282,16 @@ class PipelineSimulator:
             noise = rng.normal(0.0, scfg.temperature_noise_std, n_t)
             records[f"T_{label}"] = _first_order_lag(T_true + noise, scfg.lag_time_constant, dt)
 
+        # -- Convert temperatures from Kelvin to Celsius for export ----------
+        for label in scfg.labels:
+            key = f"T_{label}"
+            if key in records:
+                records[key] = records[key] - 273.15
+
+        # -- Simulate missing T_inlet sensor (real data has ~30% zero) -------
+        if getattr(self.cfg, "_mask_t_inlet", False):
+            records["T_inlet"] = np.zeros(n_t)
+
         # -- Labels ----------------------------------------------------------
         records["leak_rate"] = leak_rates
         records["leak_label"] = (leak_rates > 0.0).astype(int)
