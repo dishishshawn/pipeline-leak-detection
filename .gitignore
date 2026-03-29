@@ -6,5 +6,6 @@ _pycache__/
 .DS_Store
 data/raw/
 data/processed/
+artifacts/
 .claude/
 .vscode/

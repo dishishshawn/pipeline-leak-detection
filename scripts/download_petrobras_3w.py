@@ -32,9 +32,11 @@ event 0 maps to target=0 (normal).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,8 +48,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
-RAW_DIR = ROOT / "data" / "raw" / "petrobras_3w"
-PROCESSED_DIR = ROOT / "data" / "processed" / "petrobras_3w"
+DEFAULT_RAW_DIR = ROOT / "data" / "raw" / "petrobras_3w"
+DEFAULT_PROCESSED_DIR = ROOT / "data" / "processed" / "petrobras_3w"
+DEFAULT_OUTPUT_CSV = DEFAULT_PROCESSED_DIR / "petrobras_3w_scada.csv"
 
 # 3W dataset columns we care about (pressure, temperature, flow)
 KEEP_COLUMNS = [
@@ -120,13 +123,42 @@ def sanitize_sensor_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def download_3w(max_files: int | None = None) -> None:
+def resolve_repo_dir(raw_dir: Path) -> Path:
+    """Resolve the folder that should contain the cloned 3W repo."""
+    if raw_dir.name == "dataset":
+        return raw_dir.parent
+    if raw_dir.name == "3W":
+        return raw_dir
+    if (raw_dir / "dataset").exists():
+        return raw_dir
+    if (raw_dir / "3W" / "dataset").exists():
+        return raw_dir / "3W"
+    return raw_dir / "3W"
+
+
+def resolve_dataset_dir(raw_dir: Path) -> Path:
+    """Resolve the dataset directory from a raw root, repo root, or dataset path."""
+    if raw_dir.name == "dataset" and raw_dir.exists():
+        return raw_dir
+
+    repo_dir = resolve_repo_dir(raw_dir)
+    return repo_dir / "dataset"
+
+
+def resolve_processing_summary_path(output_csv: Path, summary_json: str | None) -> Path:
+    """Return the processing summary path for this build."""
+    return Path(summary_json).expanduser() if summary_json else output_csv.with_name(
+        "petrobras_3w_processing_summary.json"
+    )
+
+
+def download_3w(raw_dir: Path, max_files: int | None = None) -> None:
     """Clone the 3W dataset from GitHub (dataset directory only)."""
     import subprocess
 
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    repo_dir = resolve_repo_dir(raw_dir)
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    repo_dir = RAW_DIR / "3W"
     if repo_dir.exists() and any(repo_dir.rglob("*.parquet")):
         n_existing = len(list(repo_dir.rglob("*.parquet")))
         log.info("3W repo already exists with %d parquet files, skipping clone.", n_existing)
@@ -141,10 +173,9 @@ def download_3w(max_files: int | None = None) -> None:
     log.info("Clone complete.")
 
 
-def find_parquet_files(max_files: int | None = None) -> list[Path]:
+def find_parquet_files(raw_dir: Path, max_files: int | None = None) -> tuple[list[Path], int]:
     """Find all parquet data files in the 3W dataset directory."""
-    repo_dir = RAW_DIR / "3W"
-    dataset_dir = repo_dir / "dataset"
+    dataset_dir = resolve_dataset_dir(raw_dir)
 
     if not dataset_dir.exists():
         log.error("Dataset directory not found at %s", dataset_dir)
@@ -157,6 +188,7 @@ def find_parquet_files(max_files: int | None = None) -> list[Path]:
     files = [f for f in files if "folds" not in str(f)]
 
     log.info("Found %d parquet files", len(files))
+    available_file_count = len(files)
 
     if max_files and len(files) > max_files:
         # Sample proportionally from each event type directory
@@ -171,9 +203,9 @@ def find_parquet_files(max_files: int | None = None) -> list[Path]:
             sampled.extend(event_files[:per_event])
 
         log.info("Sampled %d files (max %d per event type)", len(sampled), per_event)
-        return sampled
+        return sampled, available_file_count
 
-    return files
+    return files, available_file_count
 
 
 def load_and_process_file(path: Path) -> pd.DataFrame | None:
@@ -242,7 +274,10 @@ def load_and_process_file(path: Path) -> pd.DataFrame | None:
     return result
 
 
-def build_processed_dataset(files: list[Path], downsample_step: int = 10) -> pd.DataFrame:
+def build_processed_dataset(
+    files: list[Path],
+    downsample_step: int = 10,
+) -> tuple[pd.DataFrame, dict[str, int], int]:
     """Load all files, process, and combine into one training dataset."""
     all_dfs: list[pd.DataFrame] = []
     event_counts: dict[str, int] = {}
@@ -269,7 +304,7 @@ def build_processed_dataset(files: list[Path], downsample_step: int = 10) -> pd.
 
     if not all_dfs:
         log.error("No data loaded from any files.")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}, 0
 
     combined = pd.concat(all_dfs, ignore_index=True)
     elapsed = time.time() - t0
@@ -280,7 +315,7 @@ def build_processed_dataset(files: list[Path], downsample_step: int = 10) -> pd.
         pct = 100 * count / len(combined)
         log.info("  %s: %d rows (%.1f%%)", event, count, pct)
 
-    return combined
+    return combined, event_counts, len(all_dfs)
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -316,6 +351,46 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def write_processing_summary(
+    summary_path: Path,
+    *,
+    raw_dir: Path,
+    output_csv: Path,
+    available_file_count: int,
+    selected_file_count: int,
+    loaded_file_count: int,
+    max_files: int | None,
+    downsample_step: int,
+    combined: pd.DataFrame,
+    event_counts: dict[str, int],
+) -> None:
+    """Write a JSON summary that notebooks can inspect after processing."""
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "raw_dir": str(raw_dir),
+        "dataset_dir": str(resolve_dataset_dir(raw_dir)),
+        "output_csv": str(output_csv),
+        "available_file_count": int(available_file_count),
+        "selected_file_count": int(selected_file_count),
+        "loaded_file_count": int(loaded_file_count),
+        "max_files": int(max_files) if max_files is not None else None,
+        "downsample_step": int(downsample_step),
+        "n_rows": int(len(combined)),
+        "n_columns": int(len(combined.columns)),
+        "n_wells": int(combined["well_id"].nunique()) if "well_id" in combined.columns else 0,
+        "n_scenarios": int(combined["scenario_id"].nunique()) if "scenario_id" in combined.columns else 0,
+        "label_distribution": {
+            str(k): int(v) for k, v in combined["target"].value_counts().sort_index().items()
+        } if "target" in combined.columns else {},
+        "event_distribution": {str(k): int(v) for k, v in sorted(event_counts.items())},
+        "columns": list(combined.columns),
+    }
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    log.info("Processing summary -> %s", summary_path)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Download and process Petrobras 3W dataset")
     ap.add_argument("--max-files", type=int, default=None,
@@ -324,20 +399,32 @@ def main() -> None:
                     help="Keep every Nth row (default: 10, i.e. 0.1Hz from 1Hz)")
     ap.add_argument("--skip-download", action="store_true",
                     help="Skip git clone, use existing files")
+    ap.add_argument("--raw-dir", type=str, default=str(DEFAULT_RAW_DIR),
+                    help="Directory that contains the 3W repo or dataset")
+    ap.add_argument("--output-csv", type=str, default=str(DEFAULT_OUTPUT_CSV),
+                    help="Where to save the processed SCADA CSV")
+    ap.add_argument("--summary-json", type=str, default=None,
+                    help="Optional JSON summary output path")
     args = ap.parse_args()
+    raw_dir = Path(args.raw_dir).expanduser()
+    output_csv = Path(args.output_csv).expanduser()
+    summary_path = resolve_processing_summary_path(output_csv, args.summary_json)
 
     # Step 1: Download
     if not args.skip_download:
-        download_3w(max_files=args.max_files)
+        download_3w(raw_dir, max_files=args.max_files)
 
     # Step 2: Find files
-    files = find_parquet_files(max_files=args.max_files)
+    files, available_file_count = find_parquet_files(raw_dir, max_files=args.max_files)
     if not files:
         log.error("No parquet files found. Check data/raw/petrobras_3w/3W/dataset/")
         return
 
     # Step 3: Process
-    combined = build_processed_dataset(files, downsample_step=args.downsample)
+    combined, event_counts, loaded_file_count = build_processed_dataset(
+        files,
+        downsample_step=args.downsample,
+    )
     if combined.empty:
         return
 
@@ -345,10 +432,21 @@ def main() -> None:
     combined = add_derived_features(combined)
 
     # Step 5: Export
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = PROCESSED_DIR / "petrobras_3w_scada.csv"
-    combined.to_csv(out_path, index=False)
-    log.info("Saved processed dataset -> %s (%.1f MB)", out_path, out_path.stat().st_size / 1e6)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(output_csv, index=False)
+    log.info("Saved processed dataset -> %s (%.1f MB)", output_csv, output_csv.stat().st_size / 1e6)
+    write_processing_summary(
+        summary_path,
+        raw_dir=raw_dir,
+        output_csv=output_csv,
+        available_file_count=available_file_count,
+        selected_file_count=len(files),
+        loaded_file_count=loaded_file_count,
+        max_files=args.max_files,
+        downsample_step=args.downsample,
+        combined=combined,
+        event_counts=event_counts,
+    )
 
     # Summary
     log.info("=== DATASET SUMMARY ===")
@@ -361,7 +459,8 @@ def main() -> None:
              100 * (combined["target"] == 1).mean())
     log.info("  Wells:          %d", combined["well_id"].nunique())
     log.info("  Columns:        %s", list(combined.columns))
-    log.info("  Output:         %s", out_path)
+    log.info("  Output:         %s", output_csv)
+    log.info("  Summary JSON:   %s", summary_path)
 
 
 if __name__ == "__main__":

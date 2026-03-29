@@ -22,6 +22,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +60,8 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT = ROOT / "data" / "processed" / "petrobras_3w" / "petrobras_3w_scada.csv"
 DEFAULT_OUTPUT = ROOT / "models" / "petrobras"
+DEFAULT_SUMMARY_NAME = "petrobras_training_summary.json"
+DEFAULT_METRICS_NAME = "petrobras_model_metrics.csv"
 FEATURE_CLIP_LIMIT = 1e9
 RATIO_CLIP_LIMIT = 1e3
 PERCENT_CLIP_LIMIT = 1e4
@@ -107,6 +110,17 @@ def sanitize_feature_matrix(features: pd.DataFrame) -> pd.DataFrame:
     features = features.bfill().ffill().fillna(0.0)
     features = features.clip(lower=-FEATURE_CLIP_LIMIT, upper=FEATURE_CLIP_LIMIT)
     return features.astype(np.float32)
+
+
+def resolve_output_paths(
+    output_dir: Path,
+    summary_json: str | None,
+    metrics_csv: str | None,
+) -> tuple[Path, Path]:
+    """Resolve per-run summary and metrics paths."""
+    summary_path = Path(summary_json).expanduser() if summary_json else output_dir / DEFAULT_SUMMARY_NAME
+    metrics_path = Path(metrics_csv).expanduser() if metrics_csv else output_dir / DEFAULT_METRICS_NAME
+    return summary_path, metrics_path
 
 
 def engineer_features(df: pd.DataFrame, window: int = 5) -> tuple[pd.DataFrame, np.ndarray]:
@@ -340,16 +354,26 @@ def main() -> None:
                     help="Processed Petrobras 3W CSV path")
     ap.add_argument("--output", type=str, default=str(DEFAULT_OUTPUT),
                     help="Output directory for trained models")
+    ap.add_argument("--summary-json", type=str, default=None,
+                    help="Optional JSON training summary path")
+    ap.add_argument("--metrics-csv", type=str, default=None,
+                    help="Optional CSV metrics output path")
     ap.add_argument("--test-split", type=float, default=0.2,
                     help="Fraction of data for test set")
     ap.add_argument("--max-rows", type=int, default=None,
                     help="Limit total rows (for quick testing)")
+    ap.add_argument("--run-label", type=str, default=None,
+                    help="Optional run label for notebook/cloud tracking")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     input_path = Path(args.input)
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path, metrics_path = resolve_output_paths(output_dir, args.summary_json, args.metrics_csv)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    run_label = args.run_label or output_dir.name
 
     if not input_path.exists():
         log.error("Input file not found: %s", input_path)
@@ -374,7 +398,6 @@ def main() -> None:
     # Optional row limit for testing
     if args.max_rows and len(df) > args.max_rows:
         # Stratified sample to preserve label distribution
-        from sklearn.utils import resample
         df_normal = df[df["target"] == 0]
         df_anomaly = df[df["target"] == 1]
         n_anomaly = min(len(df_anomaly), args.max_rows // 3)
@@ -393,6 +416,8 @@ def main() -> None:
 
     # -- Train/test split --
     # Split by scenario to prevent data leakage (same well's data in both train/test)
+    train_scenario_count = None
+    test_scenario_count = None
     if "scenario_id" in df.columns:
         scenarios = df.loc[X.index, "scenario_id"].unique()
         scenario_labels = df.loc[X.index].groupby("scenario_id")["target"].max()  # 1 if any anomaly
@@ -406,6 +431,8 @@ def main() -> None:
         test_mask = df.loc[X.index, "scenario_id"].isin(test_scenarios)
         X_train, X_test = X.loc[train_mask].values, X.loc[test_mask].values
         y_train, y_test = y[train_mask.values], y[test_mask.values]
+        train_scenario_count = len(train_scenarios)
+        test_scenario_count = len(test_scenarios)
         log.info("Split by scenario: %d train scenarios, %d test scenarios",
                  len(train_scenarios), len(test_scenarios))
     else:
@@ -423,9 +450,18 @@ def main() -> None:
 
     # -- Save models and metrics --
     summary = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_label": run_label,
         "dataset": str(input_path),
         "dataset_type": "petrobras_3w",
+        "output_dir": str(output_dir),
+        "summary_path": str(summary_path),
+        "metrics_csv": str(metrics_path),
         "n_total": len(df),
+        "n_train": int(len(X_train)),
+        "n_test": int(len(X_test)),
+        "n_train_scenarios": train_scenario_count,
+        "n_test_scenarios": test_scenario_count,
         "n_features": X.shape[1],
         "feature_names": list(X.columns),
         "label_distribution": {int(k): int(v) for k, v in zip(*np.unique(y, return_counts=True))},
@@ -433,6 +469,7 @@ def main() -> None:
         "seed": args.seed,
         "models": {},
     }
+    metrics_rows: list[dict[str, object]] = []
 
     for name, result in results.items():
         model_path = output_dir / f"petrobras_{name}.joblib"
@@ -459,6 +496,22 @@ def main() -> None:
             "f1": round(float(report.get("1", {}).get("f1-score", 0)), 4),
             "confusion_matrix": cm.tolist(),
         }
+        metrics_rows.append(
+            {
+                "run_label": run_label,
+                "model": name,
+                "roc_auc": summary["models"][name]["roc_auc"],
+                "accuracy": summary["models"][name]["accuracy"],
+                "precision": summary["models"][name]["precision"],
+                "recall": summary["models"][name]["recall"],
+                "f1": summary["models"][name]["f1"],
+                "n_total": int(len(df)),
+                "n_train": int(len(X_train)),
+                "n_test": int(len(X_test)),
+                "dataset": str(input_path),
+                "output_dir": str(output_dir),
+            }
+        )
 
         log.info("  ROC-AUC: %.4f | Acc: %.4f | Prec: %.4f | Rec: %.4f | F1: %.4f",
                  roc_auc,
@@ -467,15 +520,21 @@ def main() -> None:
                  report.get("1", {}).get("recall", 0),
                  report.get("1", {}).get("f1-score", 0))
 
+    best_name, best_info = max(summary["models"].items(), key=lambda x: x[1]["roc_auc"])
+    summary["best_model"] = {"name": best_name, **best_info}
+
     # Save summary
-    summary_path = output_dir / "petrobras_training_summary.json"
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     log.info("Summary -> %s", summary_path)
+    pd.DataFrame(metrics_rows).sort_values(["roc_auc", "f1"], ascending=[False, False]).to_csv(
+        metrics_path,
+        index=False,
+    )
+    log.info("Metrics CSV -> %s", metrics_path)
 
     # -- Final report --
     elapsed = time.time() - t0
-    best_name, best_info = max(summary["models"].items(), key=lambda x: x[1]["roc_auc"])
     log.info("=== PETROBRAS 3W TRAINING COMPLETE (%.1fs) ===", elapsed)
     log.info("  Models trained: %s", list(results.keys()))
     log.info("  Best model: %s (ROC-AUC: %.4f, F1: %.4f)", best_name, best_info["roc_auc"], best_info["f1"])

@@ -46,6 +46,11 @@ pipeline-leak-detection/
 │   ├── processed/
 │   └── sample/
 │       └── scada_sample.csv
+├── notebooks/
+│   ├── 01_setup_cloud.ipynb
+│   ├── 02_prepare_petrobras.ipynb
+│   ├── 03_train_petrobras.ipynb
+│   └── 04_compare_petrobras_runs.ipynb
 ├── models/
 │   ├── advanced/
 │   ├── realtime/
@@ -137,6 +142,23 @@ This will:
 3. Map events 1-9 to target=1 (anomaly) and event 0 to target=0 (normal)
 4. Downsample from 1 Hz to 0.1 Hz for manageable size
 5. Export to `data/processed/petrobras_3w/petrobras_3w_scada.csv`
+
+For larger cloud runs, use the notebook workflow:
+
+1. `notebooks/01_setup_cloud.ipynb`
+2. `notebooks/02_prepare_petrobras.ipynb`
+3. `notebooks/03_train_petrobras.ipynb`
+4. `notebooks/04_compare_petrobras_runs.ipynb`
+
+Those notebooks call the repo scripts directly. The cloud-friendly CLI entry points are:
+
+```bash
+python scripts/download_petrobras_3w.py --raw-dir <path> --output-csv <path> --summary-json <path>
+python scripts/train_petrobras_models.py --input <csv> --output <dir> --summary-json <path> --metrics-csv <path> --run-label <name>
+python scripts/compare_petrobras_runs.py --summary-glob "<glob>" --output-csv <path>
+```
+
+Notebook and cloud outputs should live under `artifacts/`, which is gitignored.
 
 **You do NOT need this dataset to run the dashboard or train models.** The simulator and existing sample data are sufficient for development. The 3W data is for training higher-quality models on real-world sensor distributions.
 
@@ -248,6 +270,25 @@ Current defaults use:
 - `mendeley_water_testbed` when present
 
 Robust artifacts are intended for the live simulator and are discovered alongside realtime artifacts.
+
+### Cloud Notebook Workflow
+
+For large Petrobras runs, prefer the notebook workflow so preprocessing and training can happen on cloud compute while the repo scripts remain the source of truth.
+
+Recommended run layout:
+
+```text
+artifacts/petrobras/<run-label>/
+  data/
+    petrobras_3w_scada.csv
+    petrobras_3w_processing_summary.json
+  models/
+    petrobras_training_summary.json
+    petrobras_model_metrics.csv
+    petrobras_*.joblib
+```
+
+That structure is what the notebook templates expect, and the compare notebook reads the generated `petrobras_training_summary.json` files to rank runs.
 
 ## Dashboard
 

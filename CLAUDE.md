@@ -14,7 +14,7 @@ Pipeline leak detection system for oil & gas. Startup demo targeting YC applicat
 ## Quick Commands
 
 ```bash
-python tasks.py test          # Run 40 tests
+python tasks.py test          # Run 49 tests
 python tasks.py dashboard     # Launch Streamlit on :8510
 python tasks.py physics-all   # Generate physics data + train models
 python tasks.py realtime-all  # Generate realtime data + train models
@@ -22,6 +22,7 @@ python tasks.py eval          # Evaluate models + calibrate thresholds
 python tasks.py pipeline-full # Train everything + evaluate
 python tasks.py petrobras-download  # Download Petrobras 3W real data (~1.8 GB)
 python scripts/download_petrobras_3w.py --skip-download --max-files 500  # Rebuild a medium 3W training slice
+python scripts/compare_petrobras_runs.py --summary-glob "artifacts/petrobras/*/models/petrobras_training_summary.json"
 python tasks.py --list        # Show all 26 tasks
 ```
 
@@ -42,6 +43,12 @@ data/
   raw/                     Downloaded datasets (scada_pipeline, water_leak)
   processed/               Feature-engineered datasets
   physics_sim/             Physics simulator output (scada_timeseries.csv)
+
+notebooks/
+  01_setup_cloud.ipynb     Clone/install + storage setup for Colab/Kaggle
+  02_prepare_petrobras.ipynb  Build processed 3W CSV + JSON processing summary
+  03_train_petrobras.ipynb    Train Petrobras models into a run-specific artifact dir
+  04_compare_petrobras_runs.ipynb  Flatten summaries and compare runs visually
 
 models/
   realtime/                Live-safe models (RF, XGB, LGB, IF, HybridEnsemble)
@@ -67,6 +74,7 @@ scripts/
   run_benchmark.py               Baseline benchmarks
   download_data.py               Kaggle dataset download
   download_petrobras_3w.py       Download & process Petrobras 3W (real oil well data)
+  compare_petrobras_runs.py      Flatten run summaries for notebook comparison
 
 src/
   data/                    Loaders, adapters, dataset registry, robust corpus
@@ -94,7 +102,7 @@ src/
     core.py                PipelineTelemetrySimulator (dashboard live view)
     scenarios.py           Scenario presets + manual leak triggers
 
-tests/                     40 tests covering loader, engineer, predict, simulator, models
+tests/                     49 tests covering loader, engineer, predict, simulator, Petrobras workflow, models
 ```
 
 ## Architecture Patterns
@@ -188,10 +196,12 @@ Real oil well telemetry from Petrobras (~2,228 parquet files locally after downl
 - **Download script:** `scripts/download_petrobras_3w.py`
 - **Raw data:** `data/raw/petrobras_3w/3W/` (gitignored)
 - **Processed output:** `data/processed/petrobras_3w/petrobras_3w_scada.csv` (gitignored)
+- **Cloud/notebook output pattern:** `artifacts/petrobras/<run-label>/data/` and `artifacts/petrobras/<run-label>/models/` (gitignored)
 - **Column mapping:** P-PDG → P_inlet, P-TPT → P_mid, P-MON-CKP → P_outlet, T-PDG → T_inlet, T-TPT → T_mid, QGL → Q_inlet
 - **Label mapping:** Event 0 = normal (target=0), Events 1-9 = anomaly/fault (target=1), and 100-series variants like 101-109 are normalized back to 1-9 during processing
 - **Sensor cleanup:** impossible sentinels like `-1e42` pressure or `-1e38` temperature are scrubbed to NaN before fill/interpolation
-- **Training script:** `scripts/train_petrobras_models.py` (27 physics-style features)
+- **Training script:** `scripts/train_petrobras_models.py` (27 physics-style features, run labels, summary JSON, metrics CSV)
+- **Notebook workflow:** use the four notebooks under `notebooks/` for cloud setup, preprocessing, training, and run comparison
 - **Trained models:** `models/petrobras/petrobras_*.joblib` (auto-wrapped in PhysicsModelWrapper)
 - **Current medium run:** `--max-files 500` sampled 484 files -> 2,560,071 rows, 218 wells, 484 scenarios
 - **Best current result:** LightGBM ROC-AUC 0.9425, F1 0.9297 (500-file rebuild on March 29, 2026)
