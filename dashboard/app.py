@@ -158,6 +158,50 @@ def load_live_models(dataset_type: str = "scada") -> dict:
     }
 
 
+@st.cache_data(ttl=300)
+def load_model_metrics() -> dict[str, dict[str, float]]:
+    """Load ROC-AUC and F1 from all training summary JSONs.
+
+    Returns a dict mapping artifact label -> {"roc_auc": ..., "f1": ...}.
+    """
+    from src.models.artifacts import _normalize_label
+
+    metrics: dict[str, dict[str, float]] = {}
+    for summary_path in sorted(Path("models").rglob("*summary*.json")):
+        try:
+            with open(summary_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        models_section = data.get("models") or data.get("test_metrics") or {}
+        prefix = summary_path.parent.name  # e.g. "petrobras", "physics_sim"
+        for model_key, m in models_section.items():
+            roc = m.get("roc_auc", 0)
+            f1 = m.get("f1", m.get("f1_score", 0))
+            # Build the artifact stem the same way discover_model_artifacts does
+            if prefix == "petrobras":
+                stem = f"petrobras_{model_key}"
+            elif prefix == "physics_sim":
+                stem = f"physics_sim_{model_key}"
+            elif prefix == "realtime":
+                stem = model_key
+            elif prefix == "robust":
+                stem = model_key
+            else:
+                stem = model_key
+            label = _normalize_label(stem)
+            metrics[label] = {"roc_auc": round(float(roc), 3), "f1": round(float(f1), 3)}
+    return metrics
+
+
+def format_model_option(name: str, metrics: dict[str, dict[str, float]]) -> str:
+    """Format a model name with its metrics for the selectbox."""
+    m = metrics.get(name)
+    if m and m["roc_auc"] > 0:
+        return f"{name}  (AUC {m['roc_auc']:.3f} | F1 {m['f1']:.3f})"
+    return name
+
+
 def with_segment_labels(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(segment_label=df["segment_id"].astype(str))
 
@@ -990,9 +1034,11 @@ except Exception as exc:
     st.sidebar.warning(f"Could not load models: {exc}")
     models = {}
 
+_hist_metrics = load_model_metrics()
 selected_model_name = st.sidebar.selectbox(
     "Active historical model",
     list(models.keys()) if models else ["No models found"],
+    format_func=lambda name: format_model_option(name, _hist_metrics),
 )
 
 st.title("Pipeline Leak Detection Dashboard")
@@ -1045,9 +1091,12 @@ with live_tab:
         seed = st.number_input("Random seed", min_value=1, max_value=999999, value=42, step=1, key="live_seed")
 
     with control_col3:
+        model_metrics = load_model_metrics()
+        model_names = list(live_models.keys()) if live_models else ["No realtime models found"]
         selected_live_model = st.selectbox(
             "Scoring model",
-            options=list(live_models.keys()) if live_models else ["No realtime models found"],
+            options=model_names,
+            format_func=lambda name: format_model_option(name, model_metrics),
             key="live_model_name",
         )
         st.caption("Live simulator scoring is limited to live-safe models from models/realtime, models/petrobras, and models/physics_sim.")
