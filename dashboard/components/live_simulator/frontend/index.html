@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+:root {
+    --bg: #0e1117;
+    --bg2: #262730;
+    --text: #fafafa;
+    --text-muted: #808495;
+    --primary: #ff4b4b;
+    --border: #3d4051;
+    --font: "Source Sans Pro", sans-serif;
+    --green: #2ca02c;
+    --orange: #ff7f0e;
+    --red: #d62728;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font);
+    padding: 4px 0;
+    overflow-x: hidden;
+}
+
+/* ── Card row (status + segments) ── */
+.card-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.card {
+    background: var(--bg2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    flex: 1;
+    min-width: 120px;
+}
+
+.card-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.card-value {
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.card-delta {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.card-status {
+    font-size: 11px;
+    margin-top: 4px;
+    font-weight: 600;
+}
+
+.card-alert {
+    font-size: 11px;
+    color: var(--red);
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.live-pulse { animation: pulse 1.5s ease-in-out infinite; }
+
+/* ── Metrics row ── */
+.metrics-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.metric {
+    background: var(--bg2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex: 1;
+    min-width: 100px;
+}
+
+.metric-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.metric-value {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.metric-delta {
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+.delta-bad { color: var(--red); }
+.delta-neutral { color: var(--text-muted); }
+
+/* ── Caption ── */
+.caption {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+/* ── Chart grid ── */
+.chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.chart-cell {
+    background: var(--bg2);
+    border-radius: 8px;
+    padding: 4px;
+    min-height: 300px;
+}
+
+.chart-full {
+    background: var(--bg2);
+    border-radius: 8px;
+    padding: 4px;
+    margin-bottom: 10px;
+}
+
+/* ── Table grid ── */
+.table-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.table-panel {
+    background: var(--bg2);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.table-panel h3 {
+    font-size: 14px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.info-msg {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 8px 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+th {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+tr:hover td {
+    background: rgba(255,255,255,0.03);
+}
+
+/* ── Details / log ── */
+details {
+    background: var(--bg2);
+    border-radius: 8px;
+    margin-bottom: 14px;
+}
+
+summary {
+    cursor: pointer;
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 14px;
+    user-select: none;
+}
+
+summary:hover { opacity: 0.85; }
+
+details[open] summary {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+}
+
+details > div {
+    padding: 0 14px 14px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* ── Health colors ── */
+.health-green  { color: var(--green); }
+.health-orange { color: var(--orange); }
+.health-red    { color: var(--red); }
+</style>
+</head>
+<body>
+
+<div id="root">
+    <div id="segment-cards" class="card-row"></div>
+    <div id="metrics-row" class="metrics-row"></div>
+    <div id="info-caption" class="caption" style="display:none;"></div>
+
+    <div class="chart-grid">
+        <div class="chart-cell"><div id="chart-pressure"></div></div>
+        <div class="chart-cell"><div id="chart-flow"></div></div>
+        <div class="chart-cell"><div id="chart-aux1"></div></div>
+        <div class="chart-cell"><div id="chart-aux2"></div></div>
+    </div>
+
+    <div id="score-section" class="chart-full" style="display:none;">
+        <div id="chart-score"></div>
+    </div>
+
+    <div class="table-grid">
+        <div class="table-panel">
+            <h3>Latest telemetry</h3>
+            <div id="table-telemetry"></div>
+        </div>
+        <div class="table-panel">
+            <h3>Model output</h3>
+            <div id="table-model"></div>
+        </div>
+    </div>
+
+    <details id="log-details">
+        <summary>Recent telemetry log</summary>
+        <div id="table-log"></div>
+    </details>
+</div>
+
+<script>
+/* ================================================================
+   Constants
+   ================================================================ */
+const SEGMENT_PALETTE = [
+    "#1f77b4","#ff7f0e","#2ca02c","#d62728",
+    "#9467bd","#8c564b","#e377c2","#7f7f7f"
+];
+const HEALTH_EMOJI = { green: "\u{1F7E2}", orange: "\u{1F7E0}", red: "\u{1F534}" };
+
+/* ================================================================
+   Theme
+   ================================================================ */
+let theme = {
+    bg: "#0e1117", bg2: "#262730", text: "#fafafa",
+    textMuted: "#808495", gridColor: "rgba(255,255,255,0.1)"
+};
+
+function applyTheme(st) {
+    if (!st) return;
+    const r = document.documentElement.style;
+    const bg  = st.backgroundColor || "#0e1117";
+    const bg2 = st.secondaryBackgroundColor || "#262730";
+    const txt = st.textColor || "#fafafa";
+    const isLight = st.base === "light";
+
+    r.setProperty("--bg",  bg);
+    r.setProperty("--bg2", bg2);
+    r.setProperty("--text", txt);
+    r.setProperty("--font", st.font || "sans-serif");
+    r.setProperty("--text-muted", isLight ? "#555" : "#808495");
+    r.setProperty("--border",     isLight ? "#ddd" : "#3d4051");
+
+    theme.bg        = bg;
+    theme.bg2       = bg2;
+    theme.text      = txt;
+    theme.textMuted = isLight ? "#555" : "#808495";
+    theme.gridColor = isLight ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)";
+}
+
+/* ================================================================
+   Streamlit component communication
+   ================================================================ */
+function sendMsg(type, payload) {
+    window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, payload || {}),
+        "*"
+    );
+}
+
+function setFrameHeight() {
+    const h = document.getElementById("root").scrollHeight + 24;
+    sendMsg("streamlit:setFrameHeight", { height: h });
+}
+
+/* ================================================================
+   Helpers
+   ================================================================ */
+function esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function fmt(v, d) {
+    if (v == null || isNaN(v)) return "\u2014";
+    return Number(v).toFixed(d == null ? 1 : d);
+}
+
+function pct(v) {
+    if (v == null || isNaN(v)) return "\u2014";
+    return (Number(v) * 100).toFixed(0) + "%";
+}
+
+/* ================================================================
+   Segment health cards
+   ================================================================ */
+function renderSegmentCards(data) {
+    const el = document.getElementById("segment-cards");
+    const segs = data.segments || [];
+    const running = data.running;
+
+    let h = '<div class="card">' +
+        '<div class="card-label">Status</div>' +
+        '<div class="card-value' + (running ? " live-pulse" : "") + '">' +
+        (running ? "LIVE" : "PAUSED") + '</div>' +
+        '<div class="card-delta">' + esc(data.latestTimestamp) + '</div></div>';
+
+    for (const s of segs) {
+        const emoji = HEALTH_EMOJI[s.healthColor] || "\u26AA";
+        h += '<div class="card">' +
+            '<div class="card-label">Seg ' + s.id + '</div>' +
+            '<div class="card-value">' + fmt(s.pressure) + ' bar</div>' +
+            '<div class="card-delta">' + fmt(s.flowRate, 2) + ' m\u00b3/min</div>' +
+            '<div class="card-status health-' + s.healthColor + '">' + emoji + ' ' + esc(s.healthLabel) + '</div>' +
+            (s.modelAlert ? '<div class="card-alert">\u{1F6A8} MODEL ALERT</div>' : '') +
+            '</div>';
+    }
+    el.innerHTML = h;
+}
+
+/* ================================================================
+   Summary metrics
+   ================================================================ */
+function renderMetrics(data) {
+    const m = data.metrics || {};
+    const el = document.getElementById("metrics-row");
+
+    const items = [
+        { l: "Rows emitted",       v: (m.rowsEmitted || 0).toLocaleString() },
+        { l: "Active leaks",       v: m.activeLeaks  || 0, d: m.activeLeaks  > 0 ? m.activeLeaks  : null, bad: m.activeLeaks  > 0 },
+        { l: "Max leak severity",  v: pct(m.maxSeverity) },
+        { l: "Min pump efficiency", v: pct(m.minEfficiency) },
+        { l: "False detections",   v: m.falseDetections || 0, d: m.falseDetections > 0 ? m.falseDetections : null, bad: m.falseDetections > 0 },
+    ];
+
+    let h = "";
+    for (const it of items) {
+        const dh = it.d != null
+            ? '<div class="metric-delta ' + (it.bad ? "delta-bad" : "delta-neutral") + '">' + it.d + '</div>'
+            : "";
+        h += '<div class="metric">' +
+            '<div class="metric-label">' + it.l + '</div>' +
+            '<div class="metric-value">' + it.v + '</div>' + dh + '</div>';
+    }
+    el.innerHTML = h;
+}
+
+/* ================================================================
+   Plotly chart helpers
+   ================================================================ */
+function baseLayout(title, yLabel, height) {
+    return {
+        title:  { text: title, font: { size: 13, color: theme.text } },
+        xaxis:  { gridcolor: theme.gridColor, color: theme.textMuted, tickfont: { size: 10 } },
+        yaxis:  { title: { text: yLabel, font: { size: 11 } }, gridcolor: theme.gridColor, color: theme.textMuted, tickfont: { size: 10 } },
+        height: height || 300,
+        margin: { t: 30, b: 40, l: 55, r: 12 },
+        paper_bgcolor: "transparent",
+        plot_bgcolor:  "transparent",
+        font:   { color: theme.text, family: "Source Sans Pro, sans-serif" },
+        legend: { orientation: "h", y: -0.2, font: { size: 10 } },
+        uirevision: "live",
+    };
+}
+
+function segmentTraces(chartData, yKey) {
+    return (chartData || []).map(function(seg, i) {
+        return {
+            x: seg.timestamps, y: seg[yKey] || [],
+            type: "scatter", mode: "lines",
+            name: "Seg " + seg.segmentId,
+            line: { color: SEGMENT_PALETTE[i % SEGMENT_PALETTE.length], width: 1.5 },
+        };
+    });
+}
+
+function addMarkerTrace(traces, markers, yKey) {
+    if (!markers || !markers.length) return;
+    traces.push({
+        x: markers.map(function(m){ return m.timestamp; }),
+        y: markers.map(function(m){ return m[yKey] || 0; }),
+        type: "scatter", mode: "markers+text",
+        marker: { size: 11, color: "#d62728", symbol: "diamond" },
+        text: markers.map(function(m){ return "Ideal S" + m.segmentId; }),
+        textposition: "top center",
+        textfont: { size: 9, color: "#d62728" },
+        name: "Ideal detection",
+        showlegend: true,
+    });
+}
+
+function renderChart(divId, chartData, yKey, yLabel, title, opts) {
+    opts = opts || {};
+    var el = document.getElementById(divId);
+    if (!el || typeof Plotly === "undefined") return;
+    if (!chartData || !chartData.length) return;
+
+    var traces = segmentTraces(chartData, yKey);
+    if (opts.markers) addMarkerTrace(traces, opts.markers, yKey);
+
+    var layout = baseLayout(title, yLabel, opts.height);
+
+    if (opts.hlines) {
+        layout.shapes = opts.hlines.map(function(hl) {
+            return {
+                type: "line", x0: 0, x1: 1, xref: "paper",
+                y0: hl.y, y1: hl.y,
+                line: { color: hl.color, dash: hl.dash || "dot", width: 1 },
+            };
+        });
+        layout.annotations = (layout.annotations || []).concat(
+            opts.hlines.filter(function(hl){ return hl.label; }).map(function(hl) {
+                return {
+                    x: 1, xref: "paper", xanchor: "right",
+                    y: hl.y, yanchor: "bottom",
+                    text: hl.label, showarrow: false,
+                    font: { size: 10, color: hl.color },
+                };
+            })
+        );
+    }
+
+    Plotly.react(divId, traces, layout, { responsive: true, displayModeBar: false });
+}
+
+/* ── Score chart (special handling for alerts + threshold) ── */
+function renderScoreChart(data) {
+    var container = document.getElementById("score-section");
+    var sd = data.scoreData || [];
+
+    if (!sd.length || !sd.some(function(s){ return s.leakScore && s.leakScore.length; })) {
+        container.style.display = "none";
+        return;
+    }
+    container.style.display = "block";
+
+    var traces = sd.map(function(seg, i) {
+        return {
+            x: seg.timestamps, y: seg.leakScore || [],
+            type: "scatter", mode: "lines",
+            name: "Seg " + seg.segmentId,
+            line: { color: SEGMENT_PALETTE[i % SEGMENT_PALETTE.length], width: 1.5 },
+        };
+    });
+
+    /* Alert triangle markers */
+    var firstAlert = true;
+    for (var i = 0; i < sd.length; i++) {
+        var seg = sd[i];
+        if (!seg.modelAlert) continue;
+        var ax = [], ay = [];
+        for (var j = 0; j < seg.modelAlert.length; j++) {
+            if (seg.modelAlert[j]) { ax.push(seg.timestamps[j]); ay.push(seg.leakScore[j]); }
+        }
+        if (ax.length) {
+            traces.push({
+                x: ax, y: ay, type: "scatter", mode: "markers",
+                marker: { symbol: "triangle-up", size: 9, color: "red", line: { width: 1, color: "darkred" } },
+                name: firstAlert ? "Confirmed Alert" : undefined,
+                showlegend: firstAlert,
+            });
+            firstAlert = false;
+        }
+    }
+
+    /* Ideal detection markers on score chart */
+    var sm = data.scoreMarkers || [];
+    if (sm.length) {
+        traces.push({
+            x: sm.map(function(m){ return m.timestamp; }),
+            y: sm.map(function(m){ return m.leakScore; }),
+            type: "scatter", mode: "markers+text",
+            marker: { size: 11, color: "#d62728", symbol: "diamond" },
+            text: sm.map(function(m){ return "Ideal S" + m.segmentId; }),
+            textposition: "top center",
+            textfont: { size: 9, color: "#d62728" },
+            name: "Ideal detection",
+        });
+    }
+
+    var thr = data.alertThreshold || 0.5;
+    var layout = baseLayout(
+        "Model Leak Score (" + esc(data.modelName || "") + ")",
+        "Leak score", 320
+    );
+    layout.shapes = [{
+        type: "line", x0: 0, x1: 1, xref: "paper",
+        y0: thr, y1: thr,
+        line: { color: "red", dash: "dash", width: 1 },
+    }];
+    layout.annotations = [{
+        x: 1, xref: "paper", xanchor: "right",
+        y: thr, yanchor: "bottom",
+        text: "alert threshold (" + thr.toFixed(2) + ")",
+        showarrow: false, font: { size: 10, color: "red" },
+    }];
+
+    Plotly.react("chart-score", traces, layout, { responsive: true, displayModeBar: false });
+}
+
+/* ── Render all charts ── */
+function renderAllCharts(data) {
+    var cd = data.chartData || [];
+    var mk = data.markers || [];
+
+    renderChart("chart-pressure", cd, "pressure", "Pressure (bar)", "Pressure",
+        { markers: mk, height: 300 });
+
+    renderChart("chart-flow", cd, "flowRate", "Flow (m\u00b3/min)", "Flow Rate",
+        { markers: mk.length ? mk : [], height: 300 });
+
+    if (data.hasSeverity) {
+        renderChart("chart-aux1", cd, "leakSeverity", "Severity", "Leak Severity", {
+            height: 280,
+            hlines: [
+                { y: 0.18, color: "orange", dash: "dot", label: "warning" },
+                { y: 0.55, color: "red",    dash: "dot", label: "alarm" },
+            ]
+        });
+        renderChart("chart-aux2", cd, "temperature", "Temp (\u00b0C)", "Temperature", { height: 280 });
+    } else {
+        renderChart("chart-aux1", cd, "temperature", "Temp (\u00b0C)", "Temperature", { height: 280 });
+        renderChart("chart-aux2", cd, "energyConsumption", "Energy (kW)", "Energy Consumption", { height: 280 });
+    }
+
+    renderScoreChart(data);
+}
+
+/* ================================================================
+   Tables
+   ================================================================ */
+function buildTable(columns, rows) {
+    if (!rows || !rows.length) return '<div class="info-msg">No data available.</div>';
+
+    var h = "<table><thead><tr>";
+    for (var c = 0; c < columns.length; c++) h += "<th>" + esc(columns[c]) + "</th>";
+    h += "</tr></thead><tbody>";
+
+    for (var r = 0; r < rows.length; r++) {
+        h += "<tr>";
+        for (var c = 0; c < columns.length; c++) {
+            var v = rows[r][columns[c]];
+            if (typeof v === "number")  v = Number.isInteger(v) ? v : v.toFixed(3);
+            else if (typeof v === "boolean") v = v ? "Yes" : "No";
+            h += "<td>" + esc(v) + "</td>";
+        }
+        h += "</tr>";
+    }
+    h += "</tbody></table>";
+    return h;
+}
+
+function renderTables(data) {
+    /* Latest telemetry */
+    document.getElementById("table-telemetry").innerHTML =
+        buildTable(data.telemetryColumns || [], data.latestTelemetry || []);
+
+    /* Model output */
+    var modelEl = document.getElementById("table-model");
+    if (!data.hasModel || !data.modelOutput || !data.modelOutput.length) {
+        modelEl.innerHTML = '<div class="info-msg">Select a realtime model to score the live stream.</div>';
+    } else {
+        modelEl.innerHTML = buildTable(data.modelColumns || [], data.modelOutput);
+    }
+
+    /* Recent log */
+    document.getElementById("table-log").innerHTML =
+        buildTable(data.logColumns || [], data.recentLog || []);
+}
+
+/* ================================================================
+   Info caption
+   ================================================================ */
+function renderCaption(data) {
+    var el = document.getElementById("info-caption");
+    if (data.markers && data.markers.length) {
+        el.textContent = "Red diamond markers = idealized earliest detection point for a strong model.";
+        el.style.display = "block";
+    } else {
+        el.style.display = "none";
+    }
+}
+
+/* ================================================================
+   Main render handler
+   ================================================================ */
+var lastData = null;
+
+function onRender(renderData) {
+    var data = renderData.args ? renderData.args.data : null;
+    if (!data) return;
+    lastData = data;
+
+    if (renderData.theme) applyTheme(renderData.theme);
+
+    /* Wait for Plotly if still loading from CDN */
+    if (typeof Plotly === "undefined") {
+        setTimeout(function(){ onRender(renderData); }, 200);
+        return;
+    }
+
+    renderSegmentCards(data);
+    renderMetrics(data);
+    renderCaption(data);
+    renderAllCharts(data);
+    renderTables(data);
+
+    /* Let Plotly finish layout, then set iframe height */
+    requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+            setFrameHeight();
+        });
+    });
+}
+
+/* ================================================================
+   Streamlit message listener + init
+   ================================================================ */
+window.addEventListener("message", function(event) {
+    if (event.data.type === "streamlit:render") {
+        onRender(event.data);
+    }
+});
+
+sendMsg("streamlit:componentReady", { apiVersion: 1 });
+</script>
+
+</body>
+</html>

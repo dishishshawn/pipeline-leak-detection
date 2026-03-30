@@ -32,6 +32,7 @@ from src.models.predict import (
 )
 from src.models.train import prepare_training_data
 from src.evaluation.alert_policy import AlertPolicy, AlertPolicyConfig
+from components.live_simulator import live_simulator_component
 from src.simulation import (
     PipelineTelemetrySimulator,
     SimulationConfig,
@@ -747,6 +748,176 @@ def _segment_health_label(row) -> str:
     return "NORMAL"
 
 
+def _prepare_live_component_data(
+    history: pd.DataFrame,
+    scored: pd.DataFrame,
+    markers: pd.DataFrame,
+    running: bool,
+    selected_live_model: str,
+    model_exists: bool,
+    alert_threshold: float,
+) -> dict:
+    """Package all live-view data into a JSON-safe dict for the custom component."""
+    import math
+
+    def _safe(v):
+        """Convert NaN/Inf to None for JSON safety."""
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+
+    latest_timestamp = history["timestamp"].max()
+    latest_rows = history[history["timestamp"] == latest_timestamp].sort_values("segment_id")
+    latest_scored = (
+        scored[scored["timestamp"] == latest_timestamp].sort_values("segment_id")
+        if not scored.empty
+        else pd.DataFrame()
+    )
+
+    # Alert segments
+    alert_segments: set[int] = set()
+    if not latest_scored.empty and "model_alert" in latest_scored.columns:
+        for _, arow in latest_scored.iterrows():
+            if arow.get("model_alert"):
+                alert_segments.add(int(arow["segment_id"]))
+
+    # Segment health cards
+    segments = []
+    for _, row in latest_rows.iterrows():
+        segments.append({
+            "id": int(row["segment_id"]),
+            "pressure": _safe(float(row["pressure"])),
+            "flowRate": _safe(float(row["flow_rate"])),
+            "temperature": _safe(float(row.get("temperature", 0))),
+            "leakSeverity": _safe(float(row.get("leak_severity", 0))),
+            "pumpEfficiency": _safe(float(row.get("pump_efficiency", 1))),
+            "healthColor": _segment_health_color(row),
+            "healthLabel": _segment_health_label(row),
+            "modelAlert": int(row["segment_id"]) in alert_segments,
+        })
+
+    # Summary metrics
+    active_leaks = int(latest_rows["target"].sum())
+    max_severity = _safe(float(latest_rows["leak_severity"].max())) if "leak_severity" in latest_rows.columns else 0.0
+    min_efficiency = _safe(float(latest_rows["pump_efficiency"].min())) if "pump_efficiency" in latest_rows.columns else 1.0
+    false_detections = 0
+    if not scored.empty and "target" in scored.columns:
+        if "model_alert" in scored.columns:
+            false_detections = int(((scored["model_alert"] == True) & (scored["target"] == 0)).sum())
+        elif "predicted" in scored.columns:
+            false_detections = int(((scored["predicted"] == 1) & (scored["target"] == 0)).sum())
+
+    # Chart data (per-segment time series)
+    chart_data = []
+    for seg_id in sorted(history["segment_id"].unique()):
+        seg = history[history["segment_id"] == seg_id].sort_values("timestamp")
+        entry = {
+            "segmentId": int(seg_id),
+            "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
+            "pressure": seg["pressure"].fillna(0).round(3).tolist(),
+            "flowRate": seg["flow_rate"].fillna(0).round(3).tolist(),
+            "temperature": seg["temperature"].fillna(0).round(2).tolist() if "temperature" in seg.columns else [],
+            "leakSeverity": seg["leak_severity"].fillna(0).round(4).tolist() if "leak_severity" in seg.columns else [],
+            "energyConsumption": seg["energy_consumption"].fillna(0).round(2).tolist() if "energy_consumption" in seg.columns else [],
+        }
+        chart_data.append(entry)
+
+    # Score data (per-segment model scores)
+    score_data = []
+    if not scored.empty and "leak_score" in scored.columns:
+        for seg_id in sorted(scored["segment_id"].unique()):
+            seg = scored[scored["segment_id"] == seg_id].sort_values("timestamp")
+            score_data.append({
+                "segmentId": int(seg_id),
+                "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
+                "leakScore": seg["leak_score"].fillna(0).round(3).tolist(),
+                "modelAlert": seg["model_alert"].tolist() if "model_alert" in seg.columns else [],
+            })
+
+    # Ideal detection markers
+    marker_list = []
+    if not markers.empty:
+        for _, m in markers.iterrows():
+            marker_list.append({
+                "segmentId": int(m["segment_id"]),
+                "timestamp": m["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
+                "pressure": _safe(float(m["pressure"])),
+                "flowRate": _safe(float(m["flow_rate"])),
+            })
+
+    # Score markers (leak_score values at ideal detection timestamps)
+    score_markers = []
+    if not markers.empty and not scored.empty and "leak_score" in scored.columns:
+        sm_df = markers[["segment_id", "timestamp"]].copy()
+        sv = scored.sort_values(["segment_id", "timestamp"]).merge(
+            sm_df, on=["segment_id", "timestamp"], how="inner"
+        )
+        for _, row in sv.iterrows():
+            score_markers.append({
+                "segmentId": int(row["segment_id"]),
+                "timestamp": row["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
+                "leakScore": _safe(float(row["leak_score"])),
+            })
+
+    has_severity = "leak_severity" in history.columns and float(history["leak_severity"].max()) > 0
+
+    # Table: latest telemetry
+    telemetry_cols = [c for c in [
+        "segment_id", "pressure", "flow_rate", "temperature",
+        "leak_severity", "pump_efficiency",
+        "alarm_triggered", "event_type", "target",
+    ] if c in latest_rows.columns]
+    latest_telemetry = latest_rows[telemetry_cols].fillna(0).round(3).to_dict("records")
+
+    # Table: model output
+    model_cols = []
+    model_output = []
+    if not latest_scored.empty:
+        model_cols = [c for c in [
+            "segment_id", "predicted", "leak_score",
+            "model_alert", "event_type", "target",
+        ] if c in latest_scored.columns]
+        model_output = latest_scored[model_cols].fillna(0).round(3).to_dict("records")
+
+    # Table: recent log
+    log_cols = [c for c in [
+        "timestamp", "segment_id", "pressure", "flow_rate", "temperature",
+        "leak_severity", "pump_efficiency",
+        "alarm_triggered", "event_type", "target", "scenario_context",
+    ] if c in history.columns]
+    recent = history.sort_values("timestamp", ascending=False)[log_cols].head(40).copy()
+    if "timestamp" in recent.columns:
+        recent["timestamp"] = recent["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    recent_log = recent.fillna(0).round(3).to_dict("records")
+
+    return {
+        "running": running,
+        "latestTimestamp": latest_timestamp.strftime("%H:%M:%S"),
+        "segments": segments,
+        "metrics": {
+            "rowsEmitted": len(history),
+            "activeLeaks": active_leaks,
+            "maxSeverity": max_severity,
+            "minEfficiency": min_efficiency,
+            "falseDetections": false_detections,
+        },
+        "chartData": chart_data,
+        "scoreData": score_data,
+        "markers": marker_list,
+        "scoreMarkers": score_markers,
+        "hasSeverity": has_severity,
+        "modelName": selected_live_model,
+        "alertThreshold": alert_threshold,
+        "hasModel": model_exists,
+        "telemetryColumns": telemetry_cols,
+        "latestTelemetry": latest_telemetry,
+        "modelColumns": model_cols,
+        "modelOutput": model_output,
+        "logColumns": log_cols,
+        "recentLog": recent_log,
+    }
+
+
 def render_live_view(live_models: dict, selected_live_model: str, steps_per_refresh: int) -> None:
     simulator = st.session_state.get("live_simulator")
     running = st.session_state.get("live_running", False)
@@ -763,224 +934,26 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         st.info("Simulator is configured but no telemetry has been emitted yet.")
         return
 
-    history_labeled = with_segment_labels(history)
     model = live_models.get(selected_live_model) if live_models else None
     scored = (
         score_live_history_incremental(history, model, selected_live_model)
         if model is not None
         else pd.DataFrame()
     )
-    scored_labeled = with_segment_labels(scored) if not scored.empty else scored
     markers = ideal_detection_markers(history)
+    alert_threshold = get_alert_threshold(selected_live_model)
 
-    latest_timestamp = history["timestamp"].max()
-    latest_rows = history[history["timestamp"] == latest_timestamp].sort_values("segment_id")
-    latest_scored = (
-        scored[scored["timestamp"] == latest_timestamp].sort_values("segment_id")
-        if not scored.empty
-        else pd.DataFrame()
+    data = _prepare_live_component_data(
+        history=history,
+        scored=scored,
+        markers=markers,
+        running=running,
+        selected_live_model=selected_live_model,
+        model_exists=model is not None,
+        alert_threshold=alert_threshold,
     )
 
-    # ── Segment health cards ──────────────────────────────────────────
-    # Build set of segments with active model alerts
-    _alert_segments: set[int] = set()
-    if not latest_scored.empty and "model_alert" in latest_scored.columns:
-        for _, _arow in latest_scored.iterrows():
-            if _arow.get("model_alert"):
-                _alert_segments.add(int(_arow["segment_id"]))
-
-    segment_cols = st.columns(len(latest_rows) + 1)
-    with segment_cols[0]:
-        st.metric("Status", "LIVE" if running else "PAUSED")
-        st.caption(latest_timestamp.strftime("%H:%M:%S"))
-
-    for idx, (_, row) in enumerate(latest_rows.iterrows()):
-        color = _segment_health_color(row)
-        label = _segment_health_label(row)
-        emoji = {"green": "🟢", "orange": "🟠", "red": "🔴"}[color]
-        with segment_cols[idx + 1]:
-            st.metric(
-                f"Seg {int(row['segment_id'])}",
-                f"{row['pressure']:.1f} bar",
-                delta=f"{row['flow_rate']:.2f} m\u00b3/min",
-            )
-            st.caption(f"{emoji} {label}")
-            if int(row["segment_id"]) in _alert_segments:
-                st.caption("🚨 MODEL ALERT")
-
-    # ── Summary metrics row ───────────────────────────────────────────
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Rows emitted", f"{len(history):,}")
-    active_leaks = int(latest_rows["target"].sum())
-    m2.metric("Active leaks", active_leaks, delta=f"{active_leaks}" if active_leaks > 0 else None, delta_color="inverse")
-    max_severity = latest_rows["leak_severity"].max() if "leak_severity" in latest_rows.columns else 0.0
-    m3.metric("Max leak severity", f"{max_severity:.0%}")
-    min_eff = latest_rows["pump_efficiency"].min() if "pump_efficiency" in latest_rows.columns else 1.0
-    m4.metric("Min pump efficiency", f"{min_eff:.0%}")
-
-    # False detections: model predicted leak (alert or predicted=1) but target=0
-    false_detections = 0
-    if not scored.empty and "target" in scored.columns:
-        if "model_alert" in scored.columns:
-            false_detections = int(((scored["model_alert"] == True) & (scored["target"] == 0)).sum())
-        elif "predicted" in scored.columns:
-            false_detections = int(((scored["predicted"] == 1) & (scored["target"] == 0)).sum())
-    m5.metric("False detections", false_detections, delta=f"{false_detections}" if false_detections > 0 else None, delta_color="inverse")
-
-    if not markers.empty:
-        st.caption("Red diamond markers = idealized earliest detection point for a strong model.")
-
-    # ── Pressure and flow charts ──────────────────────────────────────
-    chart_col1, chart_col2 = st.columns(2)
-    sorted_history = history_labeled.sort_values("timestamp")
-    seg_args = segment_plot_args(history_labeled)
-
-    with chart_col1:
-        fig_pressure = px.line(
-            sorted_history, x="timestamp", y="pressure",
-            labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
-            title="Pressure",
-            **seg_args,
-        )
-        fig_pressure.update_layout(height=320, margin=dict(t=35, b=25))
-        add_ideal_detection_overlay(fig_pressure, markers, y_column="pressure", chart_name="Pressure")
-        st.plotly_chart(fig_pressure, width="stretch")
-
-    with chart_col2:
-        fig_flow = px.line(
-            sorted_history, x="timestamp", y="flow_rate",
-            labels={"flow_rate": "Flow (m\u00b3/min)", "timestamp": "Time", "segment_label": "Segment"},
-            title="Flow Rate",
-            **seg_args,
-        )
-        fig_flow.update_layout(height=320, margin=dict(t=35, b=25))
-        add_ideal_detection_overlay(fig_flow, markers, y_column="flow_rate", chart_name="Flow")
-        st.plotly_chart(fig_flow, width="stretch")
-
-    # ── Leak severity and temperature charts ──────────────────────────
-    has_severity = "leak_severity" in history.columns and history["leak_severity"].max() > 0
-    chart_col3, chart_col4 = st.columns(2)
-
-    with chart_col3:
-        if has_severity:
-            fig_sev = px.line(
-                sorted_history, x="timestamp", y="leak_severity",
-                labels={"leak_severity": "Severity", "timestamp": "Time", "segment_label": "Segment"},
-                title="Leak Severity",
-                **seg_args,
-            )
-            fig_sev.add_hline(y=0.18, line_dash="dot", line_color="orange", annotation_text="warning")
-            fig_sev.add_hline(y=0.55, line_dash="dot", line_color="red", annotation_text="alarm")
-            fig_sev.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_sev, width="stretch")
-        else:
-            fig_temp = px.line(
-                sorted_history, x="timestamp", y="temperature",
-                labels={"temperature": "Temp (\u00b0C)", "timestamp": "Time", "segment_label": "Segment"},
-                title="Temperature",
-                **seg_args,
-            )
-            fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_temp, width="stretch")
-
-    with chart_col4:
-        if has_severity:
-            fig_temp = px.line(
-                sorted_history, x="timestamp", y="temperature",
-                labels={"temperature": "Temp (\u00b0C)", "timestamp": "Time", "segment_label": "Segment"},
-                title="Temperature",
-                **seg_args,
-            )
-            fig_temp.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_temp, width="stretch")
-        else:
-            fig_energy = px.line(
-                sorted_history, x="timestamp", y="energy_consumption",
-                labels={"energy_consumption": "Energy (kW)", "timestamp": "Time", "segment_label": "Segment"},
-                title="Energy Consumption",
-                **seg_args,
-            )
-            fig_energy.update_layout(height=300, margin=dict(t=35, b=25))
-            st.plotly_chart(fig_energy, width="stretch")
-
-    # ── Model leak score chart ────────────────────────────────────────
-    if not scored.empty and "leak_score" in scored.columns:
-        fig_score = px.line(
-            scored_labeled.sort_values("timestamp"),
-            x="timestamp", y="leak_score",
-            labels={"leak_score": "Leak score", "timestamp": "Time", "segment_label": "Segment"},
-            title=f"Model Leak Score ({selected_live_model})",
-            **segment_plot_args(scored_labeled),
-        )
-        _threshold = get_alert_threshold(selected_live_model)
-        fig_score.add_hline(y=_threshold, line_dash="dash", line_color="red", annotation_text=f"alert threshold ({_threshold:.2f})")
-        # Add red triangle markers for confirmed alerts (after persistence window)
-        if "model_alert" in scored.columns:
-            alert_pts = scored[scored["model_alert"] == True]
-            if not alert_pts.empty:
-                alert_pts_labeled = with_segment_labels(alert_pts)
-                fig_score.add_trace(go.Scatter(
-                    x=alert_pts_labeled["timestamp"],
-                    y=alert_pts_labeled["leak_score"],
-                    mode="markers",
-                    marker=dict(symbol="triangle-up", size=10, color="red",
-                                line=dict(width=1, color="darkred")),
-                    name="Confirmed Alert",
-                    showlegend=True,
-                ))
-        fig_score.update_layout(height=320, margin=dict(t=35, b=25))
-        if not markers.empty:
-            score_markers = markers[["segment_id", "timestamp"]].copy()
-            score_values = (
-                scored.sort_values(["segment_id", "timestamp"])
-                .merge(score_markers, on=["segment_id", "timestamp"], how="inner")
-            )
-            if not score_values.empty:
-                add_ideal_detection_overlay(
-                    fig_score,
-                    score_values.assign(marker_label="Ideal detection"),
-                    y_column="leak_score",
-                    chart_name="Leak score",
-                )
-        st.plotly_chart(fig_score, width="stretch")
-
-    # ── Telemetry & model tables ──────────────────────────────────────
-    table_col1, table_col2 = st.columns(2)
-    telemetry_cols = [
-        c for c in [
-            "segment_id", "pressure", "flow_rate", "temperature",
-            "leak_severity", "pump_efficiency",
-            "alarm_triggered", "event_type", "target",
-        ] if c in latest_rows.columns
-    ]
-    with table_col1:
-        st.subheader("Latest telemetry")
-        st.dataframe(latest_rows[telemetry_cols], width="stretch", hide_index=True)
-
-    with table_col2:
-        if latest_scored.empty:
-            st.subheader("Model output")
-            st.info("Select a realtime model to score the live stream.")
-        else:
-            visible_columns = [
-                c for c in [
-                    "segment_id", "predicted", "leak_score",
-                    "model_alert", "event_type", "target",
-                ] if c in latest_scored.columns
-            ]
-            st.subheader("Model output")
-            st.dataframe(latest_scored[visible_columns], width="stretch", hide_index=True)
-
-    with st.expander("Recent telemetry log", expanded=False):
-        log_cols = [
-            c for c in [
-                "timestamp", "segment_id", "pressure", "flow_rate", "temperature",
-                "leak_severity", "pump_efficiency",
-                "alarm_triggered", "event_type", "target", "scenario_context",
-            ] if c in history.columns
-        ]
-        recent = history.sort_values("timestamp", ascending=False)[log_cols].head(40)
-        st.dataframe(recent, width="stretch", hide_index=True)
+    live_simulator_component(data=data, key="live_sim")
 
 
 ensure_live_state()

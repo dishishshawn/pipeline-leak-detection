@@ -1,5 +1,11 @@
 {
     "python.analysis.extraPaths": [
         "./venv/Lib/site-packages"
-    ]
+    ],
+    "notebook.cellToolbarLocation": {
+        "default": "right",
+        "jupyter-notebook": "left"
+    },
+    "jupyter.notebookFileRoot": "${workspaceFolder}",
+    "notebook.output.textLineLimit": 50
 }
