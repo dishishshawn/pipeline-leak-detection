@@ -1,7 +1,16 @@
 {
+  "generated_at_utc": "2026-03-30T15:58:49.109343+00:00",
+  "run_label": "petrobras",
   "dataset": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\data\\processed\\petrobras_3w\\petrobras_3w_scada.csv",
   "dataset_type": "petrobras_3w",
+  "output_dir": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras",
+  "summary_path": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras\\petrobras_training_summary.json",
+  "metrics_csv": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras\\petrobras_model_metrics.csv",
   "n_total": 2560071,
+  "n_train": 2037608,
+  "n_test": 522463,
+  "n_train_scenarios": 387,
+  "n_test_scenarios": 97,
   "n_features": 27,
   "feature_names": [
     "P_inlet",
@@ -124,5 +133,23 @@
         ]
       ]
     }
+  },
+  "best_model": {
+    "name": "lightgbm",
+    "roc_auc": 0.9425,
+    "accuracy": 0.8819,
+    "precision": 0.9347,
+    "recall": 0.9247,
+    "f1": 0.9297,
+    "confusion_matrix": [
+      [
+        52789,
+        28482
+      ],
+      [
+        33242,
+        407950
+      ]
+    ]
   }
 }

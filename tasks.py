@@ -227,12 +227,23 @@ def clean_all():
 
 # ── Full Pipelines ───────────────────────────────────────────────────────────
 
-@task("train-all", "Train all model families (physics + realtime + robust)")
+@task("train-all", "Train all model families (physics + realtime + robust + petrobras)")
 def train_all():
     physics_all()
     realtime_all()
     robust_all()
+    petrobras_train()
     print("\nAll model families trained.")
+
+
+@task("retrain-all", "Regenerate all data + retrain all models + evaluate")
+def retrain_all():
+    physics_all()
+    realtime_all()
+    robust_all()
+    petrobras_train()
+    evaluate()
+    print("\nFull retrain + evaluation complete.")
 
 
 @task("pipeline-full", "Train all models + evaluate (full pipeline)")
@@ -261,7 +272,7 @@ def print_help():
         "Dashboard":  ["dashboard"],
         "Testing":    ["test", "test-fast"],
         "Cleanup":    ["clean", "clean-models", "clean-data", "clean-all"],
-        "Pipelines":  ["train-all", "pipeline-full"],
+        "Pipelines":  ["train-all", "retrain-all", "pipeline-full"],
     }
 
     for category, task_names in categories.items():

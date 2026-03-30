@@ -1,96 +1,96 @@
 {
   "dataset": "data\\physics_sim\\scada_timeseries.csv",
-  "n_total": 144200,
-  "n_scenarios": 200,
+  "n_total": 90500,
+  "n_scenarios": 500,
   "leak_label_distribution": {
-    "0": 93452,
-    "1": 50748
+    "0": 58885,
+    "1": 31615
   },
   "n_features": 27,
   "test_split": 0.2,
   "seed": 42,
   "models": {
     "logistic_regression": {
-      "roc_auc": 0.9925,
-      "accuracy": 0.9723,
-      "precision": 0.9919,
-      "recall": 0.929,
-      "f1": 0.9594,
+      "roc_auc": 0.8652,
+      "accuracy": 0.8297,
+      "precision": 0.8724,
+      "recall": 0.6003,
+      "f1": 0.7113,
       "confusion_matrix": [
         [
-          18613,
-          77
+          11222,
+          555
         ],
         [
-          721,
-          9429
+          2527,
+          3796
         ]
       ]
     },
     "random_forest": {
-      "roc_auc": 0.9981,
-      "accuracy": 0.9844,
-      "precision": 0.9906,
-      "recall": 0.9649,
-      "f1": 0.9776,
+      "roc_auc": 0.9815,
+      "accuracy": 0.921,
+      "precision": 0.9254,
+      "recall": 0.8417,
+      "f1": 0.8816,
       "confusion_matrix": [
         [
-          18597,
-          93
+          11348,
+          429
         ],
         [
-          356,
-          9794
+          1001,
+          5322
         ]
       ]
     },
     "xgboost": {
-      "roc_auc": 0.9984,
-      "accuracy": 0.9875,
-      "precision": 0.9924,
-      "recall": 0.972,
-      "f1": 0.9821,
+      "roc_auc": 0.9799,
+      "accuracy": 0.9222,
+      "precision": 0.9159,
+      "recall": 0.8558,
+      "f1": 0.8848,
       "confusion_matrix": [
         [
-          18614,
-          76
+          11280,
+          497
         ],
         [
-          284,
-          9866
+          912,
+          5411
         ]
       ]
     },
     "lightgbm": {
-      "roc_auc": 0.9981,
-      "accuracy": 0.9851,
-      "precision": 0.9903,
-      "recall": 0.9672,
-      "f1": 0.9786,
+      "roc_auc": 0.9765,
+      "accuracy": 0.9135,
+      "precision": 0.9093,
+      "recall": 0.8358,
+      "f1": 0.871,
       "confusion_matrix": [
         [
-          18594,
-          96
+          11250,
+          527
         ],
         [
-          333,
-          9817
+          1038,
+          5285
         ]
       ]
     },
     "isolation_forest": {
-      "roc_auc": 0.2603,
-      "accuracy": 0.6481,
+      "roc_auc": 0.4286,
+      "accuracy": 0.6507,
       "precision": 0.0,
       "recall": 0.0,
       "f1": 0.0,
       "confusion_matrix": [
         [
-          18690,
+          11777,
           0
         ],
         [
-          10150,
+          6323,
           0
         ]
       ]
