@@ -5,6 +5,7 @@ Pipeline Leak Detection - Streamlit Dashboard
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -49,11 +50,13 @@ st.set_page_config(
     layout="wide",
 )
 
+logger = logging.getLogger(__name__)
+
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
 MODEL_DIR = Path("models")
 LIVE_MODEL_DATASET = "scada"
 MIN_MODEL_ROC_AUC = 0.55  # Hide models scoring below this
-LIVE_SCORE_LOOKBACK = 5
+LIVE_SCORE_LOOKBACK = 30
 LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
 LIVE_MODEL_ALLOWLIST = {
     "Realtime Random Forest",
