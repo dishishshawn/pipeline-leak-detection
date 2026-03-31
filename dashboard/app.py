@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from sklearn.exceptions import InconsistentVersionWarning, UndefinedMetricWarning
 
 from scripts.run_benchmark import make_features
 from src.data.dataset_adapters import normalize
@@ -52,6 +54,18 @@ st.set_page_config(
 )
 
 logger = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+warnings.filterwarnings(
+    "ignore",
+    message="X has feature names, but .* was fitted without feature names",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*If you are loading a serialized model.*",
+    category=UserWarning,
+)
 
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
 MODEL_DIR = Path("models")
@@ -156,9 +170,9 @@ def _load_all_models(dataset_type: str) -> dict:
             skipped_artifacts.append(f"{label} ({Path(artifact.path).name}): {exc}")
 
     if skipped_artifacts:
-        st.warning(
-            "Some model artifacts were skipped because optional ML dependencies are not "
-            "installed in this environment: " + "; ".join(skipped_artifacts)
+        logger.warning(
+            "Skipped model artifacts because optional ML dependencies are missing: %s",
+            "; ".join(skipped_artifacts),
         )
 
     return loaded_models
@@ -651,7 +665,7 @@ def render_historical_tabs(
             labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_pressure, width="stretch")
+        st.plotly_chart(fig_pressure, use_container_width=True)
 
         st.subheader("Flow rate over time")
         fig_flow = px.line(
@@ -661,7 +675,7 @@ def render_historical_tabs(
             labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_flow, width="stretch")
+        st.plotly_chart(fig_flow, use_container_width=True)
 
         st.subheader("Leak events")
         leak_df = filtered_labeled[filtered_labeled["target"] == 1]
@@ -677,7 +691,7 @@ def render_historical_tabs(
                 title="Pressure at leak events",
                 **segment_plot_args(leak_df),
             )
-            st.plotly_chart(fig_leaks, width="stretch")
+            st.plotly_chart(fig_leaks, use_container_width=True)
 
     with tab_pred:
         if not models or selected_model_name not in models:
@@ -708,24 +722,25 @@ def render_historical_tabs(
                         except Exception as exc:
                             st.warning(f"Leak scoring failed: {exc}")
 
-                    st.subheader("Leak probability scores")
-                    result_labeled = with_segment_labels(result_df)
-                    fig_score = px.line(
-                        result_labeled.sort_values("timestamp"),
-                        x="timestamp",
-                        y="leak_score",
-                        labels={"leak_score": "Leak probability", "timestamp": "Time", "segment_label": "Segment"},
-                        **segment_plot_args(result_labeled),
-                    )
-                    fig_score.add_hline(
-                        y=0.5,
-                        line_dash="dash",
-                        line_color="red",
-                        annotation_text="threshold",
-                    )
-                    st.plotly_chart(fig_score, width="stretch")
-                else:
-                    st.info("This model only produces class predictions, so leak scores are unavailable.")
+                    if "leak_score" in result_df.columns:
+                        st.subheader("Leak probability scores")
+                        result_labeled = with_segment_labels(result_df)
+                        fig_score = px.line(
+                            result_labeled.sort_values("timestamp"),
+                            x="timestamp",
+                            y="leak_score",
+                            labels={"leak_score": "Leak probability", "timestamp": "Time", "segment_label": "Segment"},
+                            **segment_plot_args(result_labeled),
+                        )
+                        fig_score.add_hline(
+                            y=get_alert_threshold(selected_model_name),
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text="alert threshold",
+                        )
+                        st.plotly_chart(fig_score, use_container_width=True)
+                    else:
+                        st.info("This model only produces class predictions, so leak scores are unavailable.")
 
                 st.subheader("Prediction detail")
                 st.dataframe(
@@ -824,7 +839,7 @@ def render_historical_tabs(
                             height=400,
                             legend=dict(yanchor="bottom", y=0.02, xanchor="right", x=0.98),
                         )
-                        st.plotly_chart(fig_roc, width="stretch", key="roc_compare")
+                        st.plotly_chart(fig_roc, use_container_width=True, key="roc_compare")
 
                     # -- Per-model details (expandable) --
                     st.subheader("Per-model details")
@@ -846,7 +861,7 @@ def render_historical_tabs(
                                     color_continuous_scale="Blues",
                                     labels={"color": "Count"},
                                 )
-                                st.plotly_chart(fig_cm, width="stretch", key=f"cm_{name}")
+                                st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{name}")
 
 
 def _segment_health_color(row) -> str:
