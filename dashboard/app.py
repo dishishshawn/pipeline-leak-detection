@@ -52,6 +52,7 @@ st.set_page_config(
 SAMPLE_DATA_PATH = "data/sample/scada_sample.csv"
 MODEL_DIR = Path("models")
 LIVE_MODEL_DATASET = "scada"
+MIN_MODEL_ROC_AUC = 0.55  # Hide models scoring below this
 LIVE_SCORE_LOOKBACK = 5
 LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
 LIVE_MODEL_ALLOWLIST = {
@@ -201,6 +202,14 @@ def format_model_option(name: str, metrics: dict[str, dict[str, float]]) -> str:
     if m and m["roc_auc"] > 0:
         return f"{name}  (AUC {m['roc_auc']:.3f} | F1 {m['f1']:.3f})"
     return name
+
+
+def _filter_by_score(models: dict, metrics: dict[str, dict[str, float]]) -> dict:
+    """Remove models whose ROC-AUC is below MIN_MODEL_ROC_AUC."""
+    return {
+        k: v for k, v in models.items()
+        if metrics.get(k, {}).get("roc_auc", 1.0) >= MIN_MODEL_ROC_AUC
+    }
 
 
 def with_segment_labels(df: pd.DataFrame) -> pd.DataFrame:
@@ -1008,6 +1017,7 @@ except Exception as exc:
     models = {}
 
 _hist_metrics = load_model_metrics()
+models = _filter_by_score(models, _hist_metrics)
 selected_model_name = st.sidebar.selectbox(
     "Active historical model",
     list(models.keys()) if models else ["No models found"],
@@ -1065,6 +1075,7 @@ with live_tab:
 
     with control_col3:
         model_metrics = load_model_metrics()
+        live_models = _filter_by_score(live_models, model_metrics)
         model_names = list(live_models.keys()) if live_models else ["No realtime models found"]
         selected_live_model = st.selectbox(
             "Scoring model",
