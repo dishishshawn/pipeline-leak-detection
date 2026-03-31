@@ -673,63 +673,100 @@ def render_historical_tabs(
             if X_all.empty or y_all.nunique() < 2:
                 st.warning("Not enough data or only one class present - cannot evaluate.")
             else:
-                for name, mdl in models.items():
-                    st.subheader(name)
-                    col_left, col_right = st.columns(2)
+                # -- Collect metrics for all models --
+                _eval_rows: list[dict] = []
+                _roc_curves: dict[str, tuple] = {}
+                _predictions: dict[str, object] = {}
 
+                for name, mdl in models.items():
                     try:
                         preds = predict(mdl, X_all)
-                    except Exception as exc:
-                        st.error(f"Prediction failed for {name}: {exc}")
+                    except Exception:
                         continue
+                    _predictions[name] = preds
                     report = classification_report_df(y_all, preds)
-
-                    with col_left:
-                        st.markdown("**Classification report**")
-                        st.dataframe(
-                            report.style.format("{:.3f}", na_rep="-"),
-                            width="stretch",
-                        )
-
-                    cm = confusion_matrix_df(y_all, preds)
-                    with col_right:
-                        st.markdown("**Confusion matrix**")
-                        fig_cm = px.imshow(
-                            cm,
-                            text_auto=True,
-                            color_continuous_scale="Blues",
-                            labels={"color": "Count"},
-                        )
-                        st.plotly_chart(fig_cm, width="stretch", key=f"cm_{name}")
+                    row: dict = {"Model": name}
+                    if "1" in report.index:
+                        leak_row = report.loc["1"]
+                        row["Precision"] = leak_row.get("precision", 0)
+                        row["Recall"] = leak_row.get("recall", 0)
+                        row["F1"] = leak_row.get("f1-score", 0)
+                    if "accuracy" in report.index:
+                        row["Accuracy"] = report.loc["accuracy"].get("precision", 0)
 
                     if supports_probability_scores(mdl):
                         try:
                             scores = predict_leak_score(mdl, X_all)
-                        except Exception as exc:
-                            st.warning(f"Leak scoring failed for {name}: {exc}")
-                            scores = None
-                        if scores is None:
-                            continue
-                        fpr, tpr, auc_score = roc_auc(y_all, scores)
+                            fpr, tpr, auc_val = roc_auc(y_all, scores)
+                            row["ROC-AUC"] = auc_val
+                            _roc_curves[name] = (fpr, tpr, auc_val)
+                        except Exception:
+                            pass
+                    _eval_rows.append(row)
+
+                if not _eval_rows:
+                    st.warning("All models failed to produce predictions.")
+                else:
+                    # -- Leaderboard --
+                    st.subheader("Model leaderboard")
+                    lb = pd.DataFrame(_eval_rows).set_index("Model")
+                    sort_col = "ROC-AUC" if "ROC-AUC" in lb.columns else "F1"
+                    lb = lb.sort_values(sort_col, ascending=False)
+
+                    best_model = lb.index[0]
+                    best_score = lb.iloc[0].get(sort_col, 0)
+                    st.success(
+                        f"Best model: **{best_model}** ({sort_col} {best_score:.3f})"
+                    )
+
+                    st.dataframe(
+                        lb.style.format("{:.3f}", na_rep="-").highlight_max(
+                            axis=0, props="background-color: #d4edda"
+                        ),
+                        width="stretch",
+                    )
+
+                    # -- Overlaid ROC curves --
+                    if _roc_curves:
+                        st.subheader("ROC curves")
                         fig_roc = go.Figure()
-                        fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"AUC = {auc_score:.3f}"))
+                        for roc_name, (fpr, tpr, auc_val) in _roc_curves.items():
+                            fig_roc.add_trace(
+                                go.Scatter(x=fpr, y=tpr, name=f"{roc_name} ({auc_val:.3f})")
+                            )
                         fig_roc.add_shape(
-                            type="line",
-                            x0=0,
-                            y0=0,
-                            x1=1,
-                            y1=1,
-                            line=dict(dash="dash"),
+                            type="line", x0=0, y0=0, x1=1, y1=1,
+                            line=dict(dash="dash", color="gray"),
                         )
                         fig_roc.update_layout(
-                            title="ROC Curve",
                             xaxis_title="False Positive Rate",
                             yaxis_title="True Positive Rate",
-                            height=350,
+                            height=400,
+                            legend=dict(yanchor="bottom", y=0.02, xanchor="right", x=0.98),
                         )
-                        st.plotly_chart(fig_roc, width="stretch", key=f"roc_{name}")
+                        st.plotly_chart(fig_roc, width="stretch", key="roc_compare")
 
-                    st.markdown("---")
+                    # -- Per-model details (expandable) --
+                    st.subheader("Per-model details")
+                    for name, preds in _predictions.items():
+                        with st.expander(name):
+                            col_left, col_right = st.columns(2)
+                            report = classification_report_df(y_all, preds)
+                            with col_left:
+                                st.markdown("**Classification report**")
+                                st.dataframe(
+                                    report.style.format("{:.3f}", na_rep="-"),
+                                    width="stretch",
+                                )
+                            cm = confusion_matrix_df(y_all, preds)
+                            with col_right:
+                                st.markdown("**Confusion matrix**")
+                                fig_cm = px.imshow(
+                                    cm, text_auto=True,
+                                    color_continuous_scale="Blues",
+                                    labels={"color": "Count"},
+                                )
+                                st.plotly_chart(fig_cm, width="stretch", key=f"cm_{name}")
 
 
 def _segment_health_color(row) -> str:
