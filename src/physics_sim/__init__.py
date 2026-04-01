@@ -19,7 +19,19 @@ from src.physics_sim.solver import PipelineSimulator
 from src.physics_sim.scenarios import ScenarioSpec, generate_batch
 from src.physics_sim.export import export_scada_csv, export_metadata, export_long_format
 from src.physics_sim.validate import validate_physics, print_validation
-from src.physics_sim.plots import plot_pressure_profiles, plot_timeseries_comparison
+
+
+def _missing_plot_dependency(*args, **kwargs):
+    raise ModuleNotFoundError(
+        "matplotlib is required for physics simulator plotting utilities."
+    )
+
+
+try:
+    from src.physics_sim.plots import plot_pressure_profiles, plot_timeseries_comparison
+except ModuleNotFoundError:
+    plot_pressure_profiles = _missing_plot_dependency
+    plot_timeseries_comparison = _missing_plot_dependency
 
 __all__ = [
     "BoundaryConfig",
