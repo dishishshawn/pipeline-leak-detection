@@ -12,7 +12,7 @@ def classification_report_df(y_true, y_pred) -> pd.DataFrame:
     """
     Return sklearn classification report as a DataFrame.
     """
-    report = classification_report(y_true, y_pred, output_dict=True)
+    report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
     return pd.DataFrame(report).transpose()
 
 
