@@ -63,15 +63,13 @@ LIVE_MODEL_ALLOWLIST = {
     "Realtime Xgboost",
     "Realtime Lightgbm",
     "Realtime Hybrid Ensemble",
+    "Realtime Isolation Forest",
     "Petrobras Random Forest",
     "Petrobras Xgboost",
     "Petrobras Lightgbm",
-    "Petrobras Logistic Regression",
-    "Petrobras Isolation Forest",
     "Physics Sim Random Forest",
     "Physics Sim Xgboost",
     "Physics Sim Lightgbm",
-    "Physics Sim Logistic Regression",
 }
 EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
 DEFAULT_ALERT_THRESHOLD = 0.5
@@ -89,6 +87,24 @@ def _load_calibrated_thresholds() -> dict[str, float]:
 
 
 _CALIBRATED_THRESHOLDS = _load_calibrated_thresholds()
+
+
+def _load_micro_leak_sensitivity() -> dict[str, float]:
+    """Load sensitivity_micro_leak per model from evaluation results if available."""
+    if EVAL_RESULTS_PATH.exists():
+        try:
+            data = json.loads(EVAL_RESULTS_PATH.read_text())
+            return {
+                entry["model_name"]: entry["sensitivity_micro_leak"]
+                for entry in data.get("models", [])
+                if "sensitivity_micro_leak" in entry
+            }
+        except Exception:
+            pass
+    return {}
+
+
+_MICRO_LEAK_SENSITIVITY = _load_micro_leak_sensitivity()
 
 
 def get_alert_threshold(model_name: str) -> float:
@@ -203,7 +219,12 @@ def format_model_option(name: str, metrics: dict[str, dict[str, float]]) -> str:
     """Format a model name with its metrics for the selectbox."""
     m = metrics.get(name)
     if m and m["roc_auc"] > 0:
-        return f"{name}  (AUC {m['roc_auc']:.3f} | F1 {m['f1']:.3f})"
+        label = f"{name}  (AUC {m['roc_auc']:.3f} | F1 {m['f1']:.3f}"
+        micro = _MICRO_LEAK_SENSITIVITY.get(name)
+        if micro is not None:
+            label += f" | Micro {round(micro * 100)}%"
+        label += ")"
+        return label
     return name
 
 
