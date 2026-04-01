@@ -8,7 +8,8 @@ from typing import Any
 import pandas as pd
 import yaml
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+import numpy as np
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 
 try:
     import lightgbm as lgb
@@ -73,6 +74,22 @@ def _prepare_dataset(config: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame
     return featured, X, y
 
 
+def _derive_scenario_groups(featured: pd.DataFrame, X: pd.DataFrame) -> np.ndarray:
+    """Build integer group IDs from contiguous (segment_id, scenario_context) blocks."""
+    group_cols = []
+    for col in ("segment_id", "scenario_context", "scenario_id"):
+        if col in featured.columns:
+            group_cols.append(col)
+    if not group_cols:
+        return np.arange(len(X))
+
+    aligned = featured.loc[X.index, group_cols].astype(str)
+    combined = aligned.agg("|".join, axis=1)
+    groups = combined.ne(combined.shift()).cumsum().values
+    return groups
+
+
+# Deprecated: replaced by scenario-stratified k-fold CV
 def _split_dataset(
     X: pd.DataFrame,
     y: pd.Series,
@@ -115,6 +132,69 @@ def _evaluate_model(model, X: pd.DataFrame, y: pd.Series) -> dict[str, Any]:
     metrics = compute_classification_metrics(y, predictions, probabilities)
     metrics["positive_rate_predicted"] = float(predictions.mean())
     return metrics
+
+
+_CV_SCALAR_KEYS = ("accuracy", "precision", "recall", "f1_score", "roc_auc")
+
+
+def _cross_validate_models(
+    X: pd.DataFrame,
+    y: pd.Series,
+    groups: np.ndarray,
+    config: dict[str, Any],
+    n_folds: int,
+    random_state: int,
+) -> dict[str, dict[str, float]]:
+    """Run scenario-stratified k-fold CV and return aggregated metrics per model."""
+    group_series = pd.Series(groups, index=X.index)
+    group_labels = y.groupby(group_series).max().reindex(group_series.values).values
+
+    sgkf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+
+    rf_params = dict(config["models"]["random_forest"]["params"])
+    xgb_params = dict(config["models"]["xgboost"]["params"])
+    lgb_params = dict(config["models"]["lightgbm"]["params"])
+    iso_params = dict(config["models"]["isolation_forest"]["params"])
+
+    fold_metrics: dict[str, list[dict[str, float]]] = {}
+
+    for fold_i, (train_idx, test_idx) in enumerate(sgkf.split(X, group_labels, groups)):
+        logger.info("Fold %d/%d", fold_i + 1, n_folds)
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+        xgb_fold = dict(xgb_params)
+        xgb_fold.setdefault("scale_pos_weight", _xgboost_scale_pos_weight(y_train))
+        lgb_fold = dict(lgb_params)
+        lgb_fold.setdefault("class_weight", "balanced")
+
+        builders = {
+            "realtime_random_forest": lambda: _fit_random_forest(X_train, y_train, rf_params),
+            "realtime_xgboost": lambda: _fit_xgboost(X_train, y_train, xgb_fold),
+            "realtime_lightgbm": lambda: _fit_lightgbm(X_train, y_train, lgb_fold),
+            "realtime_isolation_forest": lambda: _fit_isolation_forest(X_train, y_train, iso_params),
+        }
+
+        for name, builder in builders.items():
+            model = FeatureSubsetModel(builder(), X.columns.tolist())
+            metrics = _evaluate_model(model, X_test, y_test)
+            scalars = {k: float(metrics.get(k, 0)) for k in _CV_SCALAR_KEYS}
+            fold_metrics.setdefault(name, []).append(scalars)
+
+    cv_metrics: dict[str, dict[str, float]] = {}
+    for name, folds in fold_metrics.items():
+        agg: dict[str, float] = {}
+        for key in _CV_SCALAR_KEYS:
+            vals = np.array([f[key] for f in folds])
+            agg[key] = float(vals.mean())
+            agg[f"{key}_std"] = float(vals.std())
+        cv_metrics[name] = agg
+        logger.info(
+            "  %s  ROC-AUC %.4f (+/- %.4f)  F1 %.4f (+/- %.4f)",
+            name, agg["roc_auc"], agg["roc_auc_std"], agg["f1_score"], agg["f1_score_std"],
+        )
+
+    return cv_metrics
 
 
 def _fit_random_forest(X_train, y_train, params: dict[str, Any]):
@@ -196,20 +276,17 @@ def _write_summary(
     dataset_name: str,
     data_path: str,
     feature_columns: list[str],
-    validation_metrics: dict[str, dict[str, Any]],
-    test_metrics: dict[str, dict[str, Any]],
+    cv_metrics: dict[str, dict[str, float]],
+    n_folds: int,
 ) -> Path:
     summary = {
         "dataset_name": dataset_name,
         "data_path": data_path,
         "feature_columns": feature_columns,
-        "validation_metrics": {
+        "n_folds": n_folds,
+        "cv_metrics": {
             name: _json_ready_metrics(metrics)
-            for name, metrics in validation_metrics.items()
-        },
-        "test_metrics": {
-            name: _json_ready_metrics(metrics)
-            for name, metrics in test_metrics.items()
+            for name, metrics in cv_metrics.items()
         },
     }
     output_path = output_dir / f"{dataset_name}_realtime_training_summary.json"
@@ -224,57 +301,53 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
 
     featured, X, y = _prepare_dataset(config)
     training_cfg = config["training"]
-    X_train, X_valid, X_test, y_train, y_valid, y_test = _split_dataset(
-        X,
-        y,
-        test_size=training_cfg["test_size"],
-        validation_size=training_cfg["validation_size"],
-        random_state=training_cfg["random_state"],
+    random_state = training_cfg["random_state"]
+    n_folds = training_cfg.get("n_folds", 5)
+
+    # --- Scenario-stratified k-fold CV for metric estimation ---
+    groups = _derive_scenario_groups(featured, X)
+    logger.info("Scenario groups: %d unique groups for %d-fold CV", len(np.unique(groups)), n_folds)
+
+    cv_metrics = _cross_validate_models(
+        X, y, groups, config, n_folds=n_folds, random_state=random_state,
     )
 
+    # --- Retrain final models on ALL data for deployment ---
+    logger.info("Retraining final models on full dataset (%d rows)", len(X))
     random_forest_params = dict(config["models"]["random_forest"]["params"])
     xgboost_params = dict(config["models"]["xgboost"]["params"])
     lightgbm_params = dict(config["models"]["lightgbm"]["params"])
     anomaly_params = dict(config["models"]["isolation_forest"]["params"])
 
-    if random_forest_params.get("class_weight") == "balanced_subsample":
-        pass
-    elif random_forest_params.get("class_weight") == "balanced":
-        pass
-
-    xgboost_params.setdefault("scale_pos_weight", _xgboost_scale_pos_weight(y_train))
+    xgboost_params.setdefault("scale_pos_weight", _xgboost_scale_pos_weight(y))
     lightgbm_params.setdefault("class_weight", "balanced")
 
     model_builders = {
-        "realtime_random_forest": lambda: _fit_random_forest(X_train, y_train, random_forest_params),
-        "realtime_xgboost": lambda: _fit_xgboost(X_train, y_train, xgboost_params),
-        "realtime_lightgbm": lambda: _fit_lightgbm(X_train, y_train, lightgbm_params),
-        "realtime_isolation_forest": lambda: _fit_isolation_forest(X_train, y_train, anomaly_params),
+        "realtime_random_forest": lambda: _fit_random_forest(X, y, random_forest_params),
+        "realtime_xgboost": lambda: _fit_xgboost(X, y, xgboost_params),
+        "realtime_lightgbm": lambda: _fit_lightgbm(X, y, lightgbm_params),
+        "realtime_isolation_forest": lambda: _fit_isolation_forest(X, y, anomaly_params),
     }
 
     trained_models: dict[str, object] = {}
-    validation_metrics: dict[str, dict[str, Any]] = {}
-    test_metrics: dict[str, dict[str, Any]] = {}
-
     for model_name, builder in model_builders.items():
-        logger.info("Training %s", model_name)
-        base_model = builder()
-        model = FeatureSubsetModel(base_model, X.columns.tolist())
-        trained_models[model_name] = model
-        validation_metrics[model_name] = _evaluate_model(model, X_valid, y_valid)
-        test_metrics[model_name] = _evaluate_model(model, X_test, y_test)
+        logger.info("Training final %s", model_name)
+        trained_models[model_name] = FeatureSubsetModel(builder(), X.columns.tolist())
 
+    # Ensemble weights from CV mean metrics
+    synthetic_validation = {
+        name: {"roc_auc": m["roc_auc"], "f1_score": m["f1_score"]}
+        for name, m in cv_metrics.items()
+    }
     ensemble_cfg = config["models"]["hybrid_ensemble"]
     ensemble = _build_ensemble(
         trained_models=trained_models,
-        validation_metrics=validation_metrics,
+        validation_metrics=synthetic_validation,
         include_models=ensemble_cfg["include_models"],
         threshold=ensemble_cfg["threshold"],
     )
     ensemble_name = "realtime_hybrid_ensemble"
     trained_models[ensemble_name] = ensemble
-    validation_metrics[ensemble_name] = _evaluate_model(ensemble, X_valid, y_valid)
-    test_metrics[ensemble_name] = _evaluate_model(ensemble, X_test, y_test)
 
     output_dir = Path(config["output"]["model_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -294,8 +367,8 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
         dataset_name=dataset_name,
         data_path=config["data"]["path"],
         feature_columns=X.columns.tolist(),
-        validation_metrics=validation_metrics,
-        test_metrics=test_metrics,
+        cv_metrics=cv_metrics,
+        n_folds=n_folds,
     )
 
     logger.info("Saved realtime models to %s", output_dir)
@@ -304,8 +377,7 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
     return {
         "saved_paths": saved_paths,
         "summary_path": str(summary_path),
-        "validation_metrics": validation_metrics,
-        "test_metrics": test_metrics,
+        "cv_metrics": cv_metrics,
         "feature_columns": X.columns.tolist(),
     }
 

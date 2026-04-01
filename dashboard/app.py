@@ -194,7 +194,7 @@ def load_model_metrics() -> dict[str, dict[str, float]]:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
-        models_section = data.get("models") or data.get("test_metrics") or {}
+        models_section = data.get("models") or data.get("cv_metrics") or data.get("test_metrics") or {}
         prefix = summary_path.parent.name  # e.g. "petrobras", "physics_sim"
         for model_key, m in models_section.items():
             roc = m.get("roc_auc", 0)

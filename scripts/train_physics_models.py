@@ -29,7 +29,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 
 # Allow running from project root
@@ -232,6 +232,7 @@ def main() -> None:
     ap.add_argument("--output", type=str, default="models/physics_sim", help="Output directory")
     ap.add_argument("--test-split", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--n-folds", type=int, default=5, help="Number of CV folds")
     args = ap.parse_args()
 
     input_path = Path(args.input)
@@ -248,65 +249,83 @@ def main() -> None:
     log.info(f"Features shape: {X.shape}")
     log.info(f"Leak distribution: {np.bincount(y)}")
 
-    # Train/test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X.values, y, test_size=args.test_split, random_state=args.seed, stratify=y
-    )
-    log.info(f"Train: {len(X_train)} | Test: {len(X_test)}")
+    # --- Scenario-stratified k-fold CV ---
+    groups = df.loc[X.index, "scenario_id"].values
+    group_ids = pd.factorize(groups)[0]
+    group_labels = pd.Series(y, index=X.index).groupby(group_ids).transform("max").values
 
-    # Train all models
-    log.info("Training models...")
-    results = train_models(X_train, y_train, X_test, y_test, list(X.columns))
+    sgkf = StratifiedGroupKFold(n_splits=args.n_folds, shuffle=True, random_state=args.seed)
+    log.info(f"Running {args.n_folds}-fold scenario-stratified CV "
+             f"({len(np.unique(group_ids))} scenario groups)")
 
-    # Save models and metrics
+    fold_metrics: dict[str, list[dict[str, float]]] = {}
+    feature_names = list(X.columns)
+
+    for fold_i, (train_idx, test_idx) in enumerate(sgkf.split(X.values, group_labels, group_ids)):
+        log.info(f"Fold {fold_i + 1}/{args.n_folds}: train={len(train_idx)}, test={len(test_idx)}")
+        fold_results = train_models(
+            X.values[train_idx], y[train_idx],
+            X.values[test_idx], y[test_idx],
+            feature_names,
+        )
+        for name, result in fold_results.items():
+            y_pred = result["y_pred"]
+            y_test_fold = y[test_idx]
+            report = classification_report(y_test_fold, y_pred, output_dict=True, zero_division=0)
+            scalars = {
+                "roc_auc": float(result["roc_auc"]),
+                "accuracy": float((y_pred == y_test_fold).mean()),
+                "precision": float(report.get("1", {}).get("precision", 0)),
+                "recall": float(report.get("1", {}).get("recall", 0)),
+                "f1": float(report.get("1", {}).get("f1-score", 0)),
+            }
+            fold_metrics.setdefault(name, []).append(scalars)
+
+    # Aggregate CV metrics
+    cv_summary: dict[str, dict[str, float]] = {}
+    for name, folds in fold_metrics.items():
+        agg: dict[str, float] = {}
+        for key in ("roc_auc", "accuracy", "precision", "recall", "f1"):
+            vals = np.array([f[key] for f in folds])
+            agg[key] = round(float(vals.mean()), 4)
+            agg[f"{key}_std"] = round(float(vals.std()), 4)
+        cv_summary[name] = agg
+        log.info(f"  {name}  ROC-AUC {agg['roc_auc']:.4f} (+/- {agg['roc_auc_std']:.4f})  "
+                 f"F1 {agg['f1']:.4f} (+/- {agg['f1_std']:.4f})")
+
+    # --- Retrain final models on ALL data for deployment ---
+    log.info("Retraining final models on full dataset (%d rows)...", len(X))
+    final_results = train_models(X.values, y, X.values, y, feature_names)
+
+    # Save models
     summary = {
         "dataset": str(input_path),
         "n_total": len(df),
         "n_scenarios": df.scenario_id.nunique(),
         "leak_label_distribution": {int(k): int(v) for k, v in zip(*np.unique(y, return_counts=True))},
         "n_features": X.shape[1],
-        "test_split": args.test_split,
+        "n_folds": args.n_folds,
         "seed": args.seed,
-        "models": {},
+        "models": cv_summary,
     }
 
-    for name, result in results.items():
+    for name, result in final_results.items():
         log.info(f"Saving {name}...")
         model_path = output_dir / f"physics_sim_{name}.joblib"
-        scaler_path = output_dir / f"physics_sim_{name}_scaler.joblib" if result["scaler"] else None
-
         joblib.dump(result["model"], model_path)
         if result["scaler"]:
+            scaler_path = output_dir / f"physics_sim_{name}_scaler.joblib"
             joblib.dump(result["scaler"], scaler_path)
-
-        # Metrics
-        y_pred = result["y_pred"]
-        y_score = result["y_score"]
-        roc_auc = result["roc_auc"]
-        cm = confusion_matrix(y_test, y_pred)
-        report = classification_report(y_test, y_pred, output_dict=True)
-
-        summary["models"][name] = {
-            "roc_auc": round(float(roc_auc), 4),
-            "accuracy": round(float((y_pred == y_test).mean()), 4),
-            "precision": round(float(report["1"]["precision"]), 4),
-            "recall": round(float(report["1"]["recall"]), 4),
-            "f1": round(float(report["1"]["f1-score"]), 4),
-            "confusion_matrix": cm.tolist(),
-        }
-
-        log.info(f"  ROC-AUC: {roc_auc:.4f} | Acc: {(y_pred == y_test).mean():.4f} | "
-                 f"Prec: {report['1']['precision']:.4f} | Rec: {report['1']['recall']:.4f}")
 
     # Save summary
     summary_path = output_dir / "physics_sim_training_summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
-    log.info(f"Summary → {summary_path}")
+    log.info(f"Summary -> {summary_path}")
 
     log.info("=== TRAINING COMPLETE ===")
-    log.info(f"Models: {list(results.keys())}")
-    log.info(f"Best: {max(summary['models'].items(), key=lambda x: x[1]['roc_auc'])[0]}")
+    log.info(f"Models: {list(final_results.keys())}")
+    log.info(f"Best: {max(cv_summary.items(), key=lambda x: x[1]['roc_auc'])[0]}")
 
 
 if __name__ == "__main__":
