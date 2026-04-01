@@ -35,6 +35,7 @@ from src.models.train import prepare_training_data
 from src.evaluation.alert_policy import AlertPolicy, AlertPolicyConfig
 from components.live_simulator import live_simulator_component
 from src.simulation import (
+    PhysicsSimulatorBackend,
     PipelineTelemetrySimulator,
     SimulationConfig,
     build_manual_leak_scenarios,
@@ -265,6 +266,7 @@ def ensure_live_state() -> None:
     st.session_state.setdefault("live_scored_history", pd.DataFrame())
     st.session_state.setdefault("live_scored_model", None)
     st.session_state.setdefault("live_alert_policies", {})
+    st.session_state.setdefault("live_backend", "lightweight")
 
 
 def simulator_signature(
@@ -275,6 +277,7 @@ def simulator_signature(
     history_limit: int,
     seed: int,
     steps_per_refresh: int,
+    backend: str = "lightweight",
 ) -> tuple:
     return (
         preset_key,
@@ -284,6 +287,7 @@ def simulator_signature(
         int(history_limit),
         int(seed),
         int(steps_per_refresh),
+        backend,
     )
 
 
@@ -306,6 +310,48 @@ def build_live_simulator(
     )
     scenarios = build_scenarios(preset_key, [profile.segment_id for profile in profiles])
     return PipelineTelemetrySimulator(config=config, scenarios=scenarios)
+
+
+def build_physics_simulator(
+    segment_count: int,
+    history_limit: int,
+    seed: int,
+    # fallback args for lightweight if physics init fails
+    preset_key: str,
+    tick_seconds: float,
+    step_minutes: int,
+) -> PhysicsSimulatorBackend | PipelineTelemetrySimulator:
+    try:
+        return PhysicsSimulatorBackend(
+            segment_count=segment_count,
+            history_limit=history_limit,
+            seed=seed,
+        )
+    except Exception as exc:
+        logger.warning("Physics backend failed to initialize (%s). Falling back to lightweight.", exc)
+        st.warning(f"Physics backend failed to initialize ({exc}). Falling back to lightweight simulator.")
+        return build_live_simulator(preset_key, segment_count, tick_seconds, step_minutes, history_limit, seed)
+
+
+def build_simulator_backend(
+    backend: str,
+    preset_key: str,
+    segment_count: int,
+    tick_seconds: float,
+    step_minutes: int,
+    history_limit: int,
+    seed: int,
+) -> PhysicsSimulatorBackend | PipelineTelemetrySimulator:
+    if backend == "physics":
+        return build_physics_simulator(
+            segment_count=segment_count,
+            history_limit=history_limit,
+            seed=seed,
+            preset_key=preset_key,
+            tick_seconds=tick_seconds,
+            step_minutes=step_minutes,
+        )
+    return build_live_simulator(preset_key, segment_count, tick_seconds, step_minutes, history_limit, seed)
 
 
 def inject_manual_leak(simulator: PipelineTelemetrySimulator, preset_key: str, segment_id: int) -> None:
@@ -1204,11 +1250,24 @@ with live_tab:
             key="live_model_name",
         )
         st.caption("Live simulator scoring is limited to live-safe models from models/realtime, models/petrobras, and models/physics_sim.")
+        backend_choice = st.selectbox(
+            "Simulator backend",
+            options=["Lightweight (Fast, Demo-Safe)", "Physics-Backed (Realistic, Slower)"],
+            index=0,
+            key="live_backend_label",
+            help="Physics-Backed mode may be slower on first initialization.",
+        )
+        backend_mode = "physics" if "Physics" in backend_choice else "lightweight"
+        if backend_mode == "physics":
+            st.info("Physics mode selected. First initialization may be slower.")
         st.markdown("**Preset description**")
         selected_preset_key = next(
             preset.key for preset in preset_definitions if preset.label == preset_label
         )
         st.write(preset_map[selected_preset_key].description)
+
+    backend_emoji = "⚡" if backend_mode == "lightweight" else "🔬"
+    st.caption(f"{backend_emoji} Active backend: **{backend_choice}**")
 
     signature = simulator_signature(
         selected_preset_key,
@@ -1218,13 +1277,15 @@ with live_tab:
         history_limit,
         int(seed),
         steps_per_refresh,
+        backend_mode,
     )
 
     button_col1, button_col2, button_col3 = st.columns(3)
     if button_col1.button("Start / Resume", width="stretch"):
         simulator = st.session_state.get("live_simulator")
         if simulator is None or st.session_state.get("live_signature") != signature:
-            simulator = build_live_simulator(
+            simulator = build_simulator_backend(
+                backend_mode,
                 selected_preset_key,
                 segment_count,
                 tick_seconds,
@@ -1235,6 +1296,7 @@ with live_tab:
             st.session_state["live_simulator"] = simulator
             st.session_state["live_history"] = pd.DataFrame()
             st.session_state["live_signature"] = signature
+            st.session_state["live_backend"] = backend_mode
             clear_live_score_cache()
         simulator.start()
         st.session_state["live_running"] = True
@@ -1246,7 +1308,8 @@ with live_tab:
         st.session_state["live_running"] = False
 
     if button_col3.button("Restart", width="stretch"):
-        simulator = build_live_simulator(
+        simulator = build_simulator_backend(
+            backend_mode,
             selected_preset_key,
             segment_count,
             tick_seconds,
@@ -1257,6 +1320,7 @@ with live_tab:
         st.session_state["live_simulator"] = simulator
         st.session_state["live_history"] = pd.DataFrame()
         st.session_state["live_signature"] = signature
+        st.session_state["live_backend"] = backend_mode
         clear_live_score_cache()
         simulator.start()
         st.session_state["live_running"] = True
@@ -1291,6 +1355,11 @@ with live_tab:
         simulator = st.session_state.get("live_simulator")
         if simulator is None:
             st.warning("Start the simulator before injecting a live leak event.")
+        elif isinstance(simulator, PhysicsSimulatorBackend):
+            st.info(
+                "Manual leak triggers are not supported in Physics mode — "
+                "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+            )
         else:
             inject_manual_leak(
                 simulator,

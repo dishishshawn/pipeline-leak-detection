@@ -6,6 +6,7 @@ from src.simulation.core import (
     SimulationContext,
     make_default_profiles,
 )
+from src.simulation.physics_backend import PhysicsSimulatorBackend
 from src.simulation.scenarios import (
     DemandSpikeScenario,
     LeakProgressionScenario,
@@ -22,6 +23,7 @@ __all__ = [
     "DemandSpikeScenario",
     "LeakProgressionScenario",
     "ManualLeakPreset",
+    "PhysicsSimulatorBackend",
     "PipelineTelemetrySimulator",
     "PumpWearScenario",
     "ScenarioPreset",
