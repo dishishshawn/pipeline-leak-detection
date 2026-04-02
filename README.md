@@ -2,6 +2,8 @@
 
 Pipeline leak detection and monitoring project built around SCADA-style sensor data, supervised ML models, anomaly detection, and a Streamlit dashboard with a live simulator.
 
+For a non-technical overview your team can study before investor conversations, see `TEAM_BRIEFING.md`.
+
 The repository now supports three complementary workflows:
 - offline benchmarking and evaluation on stored datasets
 - advanced model training with XGBoost/LightGBM and experiment tracking hooks
