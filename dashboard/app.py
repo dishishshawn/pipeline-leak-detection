@@ -1173,6 +1173,8 @@ except Exception as exc:
 
 st.title("Pipeline Leak Detection Dashboard")
 
+historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
+
 # --- Hero metric banner ---
 _eval_path = Path("reports/evaluation_results.json")
 _best_detection = 100.0
@@ -1226,8 +1228,6 @@ col3.metric("Alarms triggered", f"{alarm_count:,}")
 col4.metric("Segments", len(selected_segments))
 
 st.markdown("---")
-
-historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
 
 with historical_tab:
     _hist_metrics = load_model_metrics()
