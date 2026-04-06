@@ -174,7 +174,7 @@ datasets:
     local_raw: "data/raw/petrobras_3w"
     local_processed: "data/processed/petrobras_3w"
     telemetry_compatible: true
-    live_training_eligible: false
+    live_training_eligible: true
     risk_model_eligible: false
     direct_fit: false
     phase: 2
@@ -205,7 +205,7 @@ datasets:
     target: target
     id_col: null
     segment_col: null
-    notes: "Useful for rare-event methodology, not a direct live leak source"
+    notes: "Processed 3W SCADA export can be fused into the robust live-training corpus for broader industrial coverage"
 
   phmsa_pipeline_incidents:
     name: "PHMSA Pipeline Source Data"

@@ -12,6 +12,15 @@ from src.data.dataset_registry import get_dataset
 from src.data.loader import REQUIRED_COLUMNS
 
 DEFAULT_START_TIME = "2026-01-01 00:00:00"
+_PETROBRAS_PROCESSED_CSV = "petrobras_3w_scada.csv"
+_DEFAULT_SCADA_VALUES = {
+    "valve_status": 1,
+    "pump_state": 1,
+    "pump_speed": 0.0,
+    "compressor_state": 1,
+    "energy_consumption": 0.0,
+    "alarm_triggered": 0,
+}
 
 
 def _normalize_binary_target(series: pd.Series) -> pd.Series:
@@ -55,6 +64,32 @@ def _coerce_temperature(series: pd.Series | None, length: int) -> pd.Series:
     if numeric.notna().any():
         return numeric.fillna(float(numeric.dropna().median()))
     return pd.Series(np.full(length, 20.0), index=series.index)
+
+
+def _ensure_scada_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Backfill standard SCADA columns for processed telemetry exports."""
+    frame = frame.copy()
+
+    if "segment_id" not in frame.columns:
+        segment_source = None
+        for candidate in ("segment_id", "scenario_id", "well_id", "source_file"):
+            if candidate in frame.columns:
+                segment_source = frame[candidate]
+                break
+        frame["segment_id"] = _factorize_segments(segment_source, len(frame))
+
+    for column, default in _DEFAULT_SCADA_VALUES.items():
+        if column not in frame.columns:
+            frame[column] = default
+
+    if "event_type" not in frame.columns:
+        if "target" in frame.columns:
+            target = _normalize_binary_target(frame["target"])
+            frame["event_type"] = np.where(target.eq(1), "leak", "normal")
+        else:
+            frame["event_type"] = "normal"
+
+    return frame
 
 
 def rebalance_binary_frame(
@@ -132,15 +167,33 @@ def to_scada_training_frame(df: pd.DataFrame, dataset_name: str) -> pd.DataFrame
     return result.reset_index(drop=True)
 
 
+def _preferred_live_training_frame(name: str) -> pd.DataFrame:
+    meta = get_dataset(name)
+    processed_dir = Path(meta["local_processed"])
+
+    if name == "petrobras_3w":
+        processed_csv = processed_dir / _PETROBRAS_PROCESSED_CSV
+        if processed_csv.exists():
+            return load_scada_like_csv(processed_csv, name)
+
+    return pd.DataFrame()
+
+
 def load_dataset_for_live_training(name: str, nrows: int | None = None) -> pd.DataFrame:
     meta = get_dataset(name)
     if not meta.get("telemetry_compatible") or not meta.get("live_training_eligible"):
         return pd.DataFrame(columns=REQUIRED_COLUMNS + ["source_dataset"])
+
+    preferred_frame = _preferred_live_training_frame(name)
+    if not preferred_frame.empty:
+        return preferred_frame
+
     return to_scada_training_frame(normalize(name, nrows=nrows), name)
 
 
 def load_scada_like_csv(path: str | Path, source_name: str) -> pd.DataFrame:
     frame = pd.read_csv(path, low_memory=False)
+    frame = _ensure_scada_columns(frame)
     missing = [column for column in REQUIRED_COLUMNS if column not in frame.columns]
     if missing:
         raise ValueError(f"{path} is missing required SCADA columns: {missing}")

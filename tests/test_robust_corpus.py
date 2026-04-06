@@ -4,8 +4,14 @@ import joblib
 import pandas as pd
 
 from src.data.dataset_adapters import apply_column_map
-from src.data.robust_corpus import rebalance_binary_frame, to_scada_training_frame
+from src.data.robust_corpus import (
+    load_dataset_for_live_training,
+    load_scada_like_csv,
+    rebalance_binary_frame,
+    to_scada_training_frame,
+)
 from src.models.artifacts import discover_model_artifacts
+from scripts.build_robust_training_data import DEFAULT_DATASETS
 
 
 class ConstantModel:
@@ -83,6 +89,79 @@ def test_rebalance_binary_frame_caps_negative_ratio():
     negatives = int((rebalanced["target"] == 0).sum())
     assert positives == 4
     assert negatives <= 8
+
+
+def test_load_scada_like_csv_backfills_missing_scada_columns(tmp_path):
+    csv_path = tmp_path / "petrobras.csv"
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-01-01 00:00:00", "2026-01-01 00:01:00"],
+            "scenario_id": ["well-a", "well-a"],
+            "pressure": [10.0, 10.2],
+            "flow_rate": [5.0, 5.1],
+            "temperature": [30.0, 30.2],
+            "target": [0, 1],
+        }
+    ).to_csv(csv_path, index=False)
+
+    frame = load_scada_like_csv(csv_path, "petrobras_3w")
+
+    assert set(frame.columns).issuperset(
+        {
+            "segment_id",
+            "valve_status",
+            "pump_state",
+            "pump_speed",
+            "compressor_state",
+            "energy_consumption",
+            "alarm_triggered",
+            "event_type",
+        }
+    )
+    assert frame["segment_id"].nunique() == 1
+    assert frame["event_type"].tolist() == ["normal", "leak"]
+
+
+def test_load_dataset_for_live_training_prefers_processed_petrobras_csv(tmp_path, monkeypatch):
+    processed_dir = tmp_path / "processed" / "petrobras_3w"
+    processed_dir.mkdir(parents=True)
+    processed_csv = processed_dir / "petrobras_3w_scada.csv"
+    processed_csv.write_text("timestamp,segment_id,pressure,flow_rate,temperature,target\n")
+
+    sentinel = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2026-01-01 00:00:00"]),
+            "segment_id": [1],
+            "pressure": [10.0],
+            "flow_rate": [5.0],
+            "temperature": [30.0],
+            "target": [1],
+            "source_dataset": ["petrobras_3w"],
+        }
+    )
+
+    monkeypatch.setattr(
+        "src.data.robust_corpus.get_dataset",
+        lambda name: {
+            "telemetry_compatible": True,
+            "live_training_eligible": True,
+            "local_processed": str(processed_dir),
+        },
+    )
+    monkeypatch.setattr("src.data.robust_corpus.load_scada_like_csv", lambda path, source_name: sentinel)
+    monkeypatch.setattr(
+        "src.data.robust_corpus.normalize",
+        lambda name, nrows=None: (_ for _ in ()).throw(AssertionError("normalize should not be called")),
+    )
+
+    frame = load_dataset_for_live_training("petrobras_3w")
+
+    assert frame.equals(sentinel)
+
+
+def test_robust_corpus_defaults_use_petrobras_instead_of_water_leak():
+    assert "petrobras_3w" in DEFAULT_DATASETS
+    assert "water_leak" not in DEFAULT_DATASETS
 
 
 def test_discover_model_artifacts_prefers_robust_models(tmp_path):
