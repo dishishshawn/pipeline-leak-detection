@@ -34,7 +34,7 @@ from sklearn.metrics import (
     confusion_matrix,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 
 # Allow running from project root
@@ -65,6 +65,7 @@ DEFAULT_METRICS_NAME = "petrobras_model_metrics.csv"
 FEATURE_CLIP_LIMIT = 1e9
 RATIO_CLIP_LIMIT = 1e3
 PERCENT_CLIP_LIMIT = 1e4
+CV_SCALAR_KEYS = ("roc_auc", "accuracy", "precision", "recall", "f1")
 SENSOR_BOUNDS = {
     "P_": (-1e6, 1e9),
     "T_": (-100.0, 500.0),
@@ -240,7 +241,7 @@ def train_models(
 
     # 1. Logistic Regression (needs scaling)
     log.info("Training Logistic Regression...")
-    lr = LogisticRegression(max_iter=1000, random_state=42, n_jobs=-1, class_weight="balanced")
+    lr = LogisticRegression(max_iter=1000, random_state=42, n_jobs=1, class_weight="balanced")
     lr.fit(X_train_scaled, y_train)
     y_pred_lr = lr.predict(X_test_scaled)
     y_score_lr = lr.predict_proba(X_test_scaled)[:, 1]
@@ -348,6 +349,80 @@ def train_models(
     return results
 
 
+def summarize_model_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray) -> dict[str, float | list[list[int]]]:
+    """Convert raw predictions into the scalar metrics we store in summaries."""
+    report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+    confusion = confusion_matrix(y_true, y_pred)
+    return {
+        "roc_auc": round(float(roc_auc_score(y_true, y_score)), 4),
+        "accuracy": round(float((y_pred == y_true).mean()), 4),
+        "precision": round(float(report.get("1", {}).get("precision", 0)), 4),
+        "recall": round(float(report.get("1", {}).get("recall", 0)), 4),
+        "f1": round(float(report.get("1", {}).get("f1-score", 0)), 4),
+        "confusion_matrix": confusion.tolist(),
+    }
+
+
+def aggregate_cv_metrics(fold_metrics: dict[str, list[dict[str, float]]]) -> dict[str, dict[str, float]]:
+    """Aggregate per-fold scalar metrics into mean/std summary rows."""
+    summary: dict[str, dict[str, float]] = {}
+    for model_name, metrics_list in fold_metrics.items():
+        agg: dict[str, float] = {}
+        for key in CV_SCALAR_KEYS:
+            values = np.array([metrics[key] for metrics in metrics_list], dtype=float)
+            agg[key] = round(float(values.mean()), 4)
+            agg[f"{key}_std"] = round(float(values.std()), 4)
+        summary[model_name] = agg
+    return summary
+
+
+def cross_validate_models(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    groups: np.ndarray,
+    *,
+    n_folds: int,
+    seed: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, int | float]]:
+    """Run scenario-stratified k-fold CV using scenario ids as groups."""
+    group_ids = pd.factorize(groups)[0]
+    group_labels = pd.Series(y, index=X.index).groupby(group_ids).transform("max").values
+    sgkf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+
+    fold_metrics: dict[str, list[dict[str, float]]] = {}
+    train_rows: list[int] = []
+    test_rows: list[int] = []
+    train_groups: list[int] = []
+    test_groups: list[int] = []
+
+    for fold_i, (train_idx, test_idx) in enumerate(sgkf.split(X.values, group_labels, group_ids)):
+        log.info("Fold %d/%d: train=%d, test=%d", fold_i + 1, n_folds, len(train_idx), len(test_idx))
+        train_rows.append(int(len(train_idx)))
+        test_rows.append(int(len(test_idx)))
+        train_groups.append(int(len(np.unique(group_ids[train_idx]))))
+        test_groups.append(int(len(np.unique(group_ids[test_idx]))))
+
+        fold_results = train_models(
+            X.values[train_idx],
+            y[train_idx],
+            X.values[test_idx],
+            y[test_idx],
+            list(X.columns),
+        )
+        for model_name, result in fold_results.items():
+            fold_metrics.setdefault(model_name, []).append(
+                summarize_model_metrics(y[test_idx], result["y_pred"], result["y_score"])
+            )
+
+    fold_sizes = {
+        "avg_train_rows": int(round(float(np.mean(train_rows)))) if train_rows else 0,
+        "avg_test_rows": int(round(float(np.mean(test_rows)))) if test_rows else 0,
+        "avg_train_scenarios": int(round(float(np.mean(train_groups)))) if train_groups else 0,
+        "avg_test_scenarios": int(round(float(np.mean(test_groups)))) if test_groups else 0,
+    }
+    return aggregate_cv_metrics(fold_metrics), fold_sizes
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train models on Petrobras 3W real oil well data")
     ap.add_argument("--input", type=str, default=str(DEFAULT_INPUT),
@@ -360,6 +435,8 @@ def main() -> None:
                     help="Optional CSV metrics output path")
     ap.add_argument("--test-split", type=float, default=0.2,
                     help="Fraction of data for test set")
+    ap.add_argument("--n-folds", type=int, default=5,
+                    help="Scenario-stratified CV folds when scenario_id is available")
     ap.add_argument("--max-rows", type=int, default=None,
                     help="Limit total rows (for quick testing)")
     ap.add_argument("--run-label", type=str, default=None,
@@ -414,39 +491,67 @@ def main() -> None:
     log.info("Features: %d columns, %d rows", X.shape[1], X.shape[0])
     log.info("Label distribution: %s", dict(zip(*np.unique(y, return_counts=True))))
 
-    # -- Train/test split --
-    # Split by scenario to prevent data leakage (same well's data in both train/test)
+    evaluation_protocol = "single_train_test_split"
+    train_row_count = None
+    test_row_count = None
     train_scenario_count = None
     test_scenario_count = None
-    if "scenario_id" in df.columns:
-        scenarios = df.loc[X.index, "scenario_id"].unique()
-        scenario_labels = df.loc[X.index].groupby("scenario_id")["target"].max()  # 1 if any anomaly
-        train_scenarios, test_scenarios = train_test_split(
-            scenarios,
-            test_size=args.test_split,
-            random_state=args.seed,
-            stratify=scenario_labels.loc[scenarios].values if scenario_labels.nunique() > 1 else None,
+
+    # -- Evaluation --
+    if "scenario_id" in df.columns and df.loc[X.index, "scenario_id"].nunique() >= max(args.n_folds, 2):
+        evaluation_protocol = "scenario_stratified_k_fold"
+        log.info("Running %d-fold scenario-stratified CV...", args.n_folds)
+        t_train = time.time()
+        cv_summary, fold_sizes = cross_validate_models(
+            X,
+            y,
+            df.loc[X.index, "scenario_id"].astype(str).values,
+            n_folds=args.n_folds,
+            seed=args.seed,
         )
-        train_mask = df.loc[X.index, "scenario_id"].isin(train_scenarios)
-        test_mask = df.loc[X.index, "scenario_id"].isin(test_scenarios)
-        X_train, X_test = X.loc[train_mask].values, X.loc[test_mask].values
-        y_train, y_test = y[train_mask.values], y[test_mask.values]
-        train_scenario_count = len(train_scenarios)
-        test_scenario_count = len(test_scenarios)
-        log.info("Split by scenario: %d train scenarios, %d test scenarios",
-                 len(train_scenarios), len(test_scenarios))
+        log.info("Cross-validation complete in %.1fs", time.time() - t_train)
+        train_row_count = fold_sizes["avg_train_rows"]
+        test_row_count = fold_sizes["avg_test_rows"]
+        train_scenario_count = fold_sizes["avg_train_scenarios"]
+        test_scenario_count = fold_sizes["avg_test_scenarios"]
     else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X.values, y, test_size=args.test_split, random_state=args.seed, stratify=y,
-        )
+        if "scenario_id" in df.columns:
+            scenarios = df.loc[X.index, "scenario_id"].unique()
+            scenario_labels = df.loc[X.index].groupby("scenario_id")["target"].max()
+            train_scenarios, test_scenarios = train_test_split(
+                scenarios,
+                test_size=args.test_split,
+                random_state=args.seed,
+                stratify=scenario_labels.loc[scenarios].values if scenario_labels.nunique() > 1 else None,
+            )
+            train_mask = df.loc[X.index, "scenario_id"].isin(train_scenarios)
+            test_mask = df.loc[X.index, "scenario_id"].isin(test_scenarios)
+            X_train, X_test = X.loc[train_mask].values, X.loc[test_mask].values
+            y_train, y_test = y[train_mask.values], y[test_mask.values]
+            train_scenario_count = len(train_scenarios)
+            test_scenario_count = len(test_scenarios)
+            log.info("Split by scenario: %d train scenarios, %d test scenarios",
+                     len(train_scenarios), len(test_scenarios))
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X.values, y, test_size=args.test_split, random_state=args.seed, stratify=y,
+            )
 
-    log.info("Train: %d rows | Test: %d rows", len(X_train), len(X_test))
+        train_row_count = int(len(X_train))
+        test_row_count = int(len(X_test))
+        log.info("Train: %d rows | Test: %d rows", train_row_count, test_row_count)
+        log.info("Training models...")
+        t_train = time.time()
+        split_results = train_models(X_train, y_train, X_test, y_test, list(X.columns))
+        log.info("Training complete in %.1fs", time.time() - t_train)
+        cv_summary = {
+            name: summarize_model_metrics(y_test, result["y_pred"], result["y_score"])
+            for name, result in split_results.items()
+        }
 
-    # -- Train --
-    log.info("Training models...")
-    t_train = time.time()
-    results = train_models(X_train, y_train, X_test, y_test, list(X.columns))
-    log.info("Training complete in %.1fs", time.time() - t_train)
+    # -- Final retrain for saved artifacts --
+    log.info("Retraining final models on full dataset (%d rows)...", len(X))
+    final_results = train_models(X.values, y, X.values, y, list(X.columns))
 
     # -- Save models and metrics --
     summary = {
@@ -458,20 +563,22 @@ def main() -> None:
         "summary_path": str(summary_path),
         "metrics_csv": str(metrics_path),
         "n_total": len(df),
-        "n_train": int(len(X_train)),
-        "n_test": int(len(X_test)),
+        "n_train": train_row_count,
+        "n_test": test_row_count,
         "n_train_scenarios": train_scenario_count,
         "n_test_scenarios": test_scenario_count,
         "n_features": X.shape[1],
         "feature_names": list(X.columns),
         "label_distribution": {int(k): int(v) for k, v in zip(*np.unique(y, return_counts=True))},
+        "evaluation_protocol": evaluation_protocol,
+        "n_folds": args.n_folds if evaluation_protocol == "scenario_stratified_k_fold" else None,
         "test_split": args.test_split,
         "seed": args.seed,
         "models": {},
     }
     metrics_rows: list[dict[str, object]] = []
 
-    for name, result in results.items():
+    for name, result in final_results.items():
         model_path = output_dir / f"petrobras_{name}.joblib"
         joblib.dump(result["model"], model_path)
         log.info("Saved %s -> %s", name, model_path)
@@ -481,21 +588,7 @@ def main() -> None:
             joblib.dump(result["scaler"], scaler_path)
             log.info("  Scaler -> %s", scaler_path)
 
-        # Compute metrics
-        y_pred = result["y_pred"]
-        y_score = result["y_score"]
-        roc_auc = result["roc_auc"]
-        cm = confusion_matrix(y_test, y_pred)
-        report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
-
-        summary["models"][name] = {
-            "roc_auc": round(float(roc_auc), 4),
-            "accuracy": round(float((y_pred == y_test).mean()), 4),
-            "precision": round(float(report.get("1", {}).get("precision", 0)), 4),
-            "recall": round(float(report.get("1", {}).get("recall", 0)), 4),
-            "f1": round(float(report.get("1", {}).get("f1-score", 0)), 4),
-            "confusion_matrix": cm.tolist(),
-        }
+        summary["models"][name] = cv_summary[name]
         metrics_rows.append(
             {
                 "run_label": run_label,
@@ -506,19 +599,19 @@ def main() -> None:
                 "recall": summary["models"][name]["recall"],
                 "f1": summary["models"][name]["f1"],
                 "n_total": int(len(df)),
-                "n_train": int(len(X_train)),
-                "n_test": int(len(X_test)),
+                "n_train": train_row_count,
+                "n_test": test_row_count,
                 "dataset": str(input_path),
                 "output_dir": str(output_dir),
             }
         )
-
-        log.info("  ROC-AUC: %.4f | Acc: %.4f | Prec: %.4f | Rec: %.4f | F1: %.4f",
-                 roc_auc,
-                 (y_pred == y_test).mean(),
-                 report.get("1", {}).get("precision", 0),
-                 report.get("1", {}).get("recall", 0),
-                 report.get("1", {}).get("f1-score", 0))
+        log.info("  %s CV ROC-AUC: %.4f | Acc: %.4f | Prec: %.4f | Rec: %.4f | F1: %.4f",
+                 name,
+                 summary["models"][name]["roc_auc"],
+                 summary["models"][name]["accuracy"],
+                 summary["models"][name]["precision"],
+                 summary["models"][name]["recall"],
+                 summary["models"][name]["f1"])
 
     best_name, best_info = max(summary["models"].items(), key=lambda x: x[1]["roc_auc"])
     summary["best_model"] = {"name": best_name, **best_info}
@@ -536,7 +629,7 @@ def main() -> None:
     # -- Final report --
     elapsed = time.time() - t0
     log.info("=== PETROBRAS 3W TRAINING COMPLETE (%.1fs) ===", elapsed)
-    log.info("  Models trained: %s", list(results.keys()))
+    log.info("  Models trained: %s", list(final_results.keys()))
     log.info("  Best model: %s (ROC-AUC: %.4f, F1: %.4f)", best_name, best_info["roc_auc"], best_info["f1"])
     log.info("  Output dir: %s", output_dir.resolve())
 
