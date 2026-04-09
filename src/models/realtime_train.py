@@ -56,7 +56,9 @@ def _xgboost_scale_pos_weight(y: pd.Series) -> float:
     return negative / positive
 
 
-def _prepare_dataset(config: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+def _prepare_dataset(
+    config: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, np.ndarray]:
     data_path = config["data"]["path"]
     df = load_and_prepare(data_path)
     sample_size = config["data"].get("sample_size")
@@ -71,7 +73,19 @@ def _prepare_dataset(config: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame
     exclude_columns = set(config.get("feature_selection", {}).get("exclude_columns", []))
     if exclude_columns:
         X = X.drop(columns=sorted(exclude_columns), errors="ignore")
-    return featured, X, y
+
+    # Build sample weights: upweight low-severity leak rows so all models
+    # learn the subtle signal, not just obvious ruptures.
+    sample_weight = np.ones(len(y), dtype=float)
+    if "leak_severity" in featured.columns:
+        sev = featured.loc[X.index, "leak_severity"].fillna(0.0).values
+        # Micro-leak: severity < 0.3 and target==1  →  3× weight
+        # Mid-severity: 0.3 <= severity < 0.6 and target==1  →  2× weight
+        is_leak = y.values == 1
+        sample_weight[is_leak & (sev < 0.3)] = 3.0
+        sample_weight[is_leak & (sev >= 0.3) & (sev < 0.6)] = 2.0
+
+    return featured, X, y, sample_weight
 
 
 def _derive_scenario_groups(featured: pd.DataFrame, X: pd.DataFrame) -> np.ndarray:
@@ -141,6 +155,7 @@ def _cross_validate_models(
     X: pd.DataFrame,
     y: pd.Series,
     groups: np.ndarray,
+    sample_weight: np.ndarray,
     config: dict[str, Any],
     n_folds: int,
     random_state: int,
@@ -162,16 +177,16 @@ def _cross_validate_models(
         logger.info("Fold %d/%d", fold_i + 1, n_folds)
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        sw_train = sample_weight[train_idx]
 
         xgb_fold = dict(xgb_params)
         xgb_fold.setdefault("scale_pos_weight", _xgboost_scale_pos_weight(y_train))
         lgb_fold = dict(lgb_params)
-        lgb_fold.setdefault("class_weight", "balanced")
 
         builders = {
-            "realtime_random_forest": lambda: _fit_random_forest(X_train, y_train, rf_params),
-            "realtime_xgboost": lambda: _fit_xgboost(X_train, y_train, xgb_fold),
-            "realtime_lightgbm": lambda: _fit_lightgbm(X_train, y_train, lgb_fold),
+            "realtime_random_forest": lambda: _fit_random_forest(X_train, y_train, rf_params, sw_train),
+            "realtime_xgboost": lambda: _fit_xgboost(X_train, y_train, xgb_fold, sw_train),
+            "realtime_lightgbm": lambda: _fit_lightgbm(X_train, y_train, lgb_fold, sw_train),
             "realtime_isolation_forest": lambda: _fit_isolation_forest(X_train, y_train, iso_params),
         }
 
@@ -197,13 +212,13 @@ def _cross_validate_models(
     return cv_metrics
 
 
-def _fit_random_forest(X_train, y_train, params: dict[str, Any]):
+def _fit_random_forest(X_train, y_train, params: dict[str, Any], sample_weight=None):
     model = RandomForestClassifier(**params)
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, sample_weight=sample_weight)
     return model
 
 
-def _fit_xgboost(X_train, y_train, params: dict[str, Any]):
+def _fit_xgboost(X_train, y_train, params: dict[str, Any], sample_weight=None):
     if not XGB_AVAILABLE:
         raise ImportError("xgboost is not installed in the active environment")
 
@@ -213,16 +228,21 @@ def _fit_xgboost(X_train, y_train, params: dict[str, Any]):
         use_label_encoder=False,
         **params,
     )
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, sample_weight=sample_weight)
     return model
 
 
-def _fit_lightgbm(X_train, y_train, params: dict[str, Any]):
+def _fit_lightgbm(X_train, y_train, params: dict[str, Any], sample_weight=None):
     if not LGBM_AVAILABLE:
         raise ImportError("lightgbm is not installed in the active environment")
 
-    model = lgb.LGBMClassifier(**params)
-    model.fit(X_train, y_train)
+    # Remove class_weight if is_unbalance is set — they conflict in LightGBM
+    lgb_params = dict(params)
+    if lgb_params.get("is_unbalance"):
+        lgb_params.pop("class_weight", None)
+
+    model = lgb.LGBMClassifier(**lgb_params)
+    model.fit(X_train, y_train, sample_weight=sample_weight)
     return model
 
 
@@ -299,7 +319,7 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
     config = load_realtime_config(config_path)
     logging.basicConfig(level=getattr(logging, config["output"].get("log_level", "INFO")))
 
-    featured, X, y = _prepare_dataset(config)
+    featured, X, y, sample_weight = _prepare_dataset(config)
     training_cfg = config["training"]
     random_state = training_cfg["random_state"]
     n_folds = training_cfg.get("n_folds", 5)
@@ -309,7 +329,7 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
     logger.info("Scenario groups: %d unique groups for %d-fold CV", len(np.unique(groups)), n_folds)
 
     cv_metrics = _cross_validate_models(
-        X, y, groups, config, n_folds=n_folds, random_state=random_state,
+        X, y, groups, sample_weight, config, n_folds=n_folds, random_state=random_state,
     )
 
     # --- Retrain final models on ALL data for deployment ---
@@ -320,12 +340,11 @@ def train_realtime_models(config_path: str) -> dict[str, Any]:
     anomaly_params = dict(config["models"]["isolation_forest"]["params"])
 
     xgboost_params.setdefault("scale_pos_weight", _xgboost_scale_pos_weight(y))
-    lightgbm_params.setdefault("class_weight", "balanced")
 
     model_builders = {
-        "realtime_random_forest": lambda: _fit_random_forest(X, y, random_forest_params),
-        "realtime_xgboost": lambda: _fit_xgboost(X, y, xgboost_params),
-        "realtime_lightgbm": lambda: _fit_lightgbm(X, y, lightgbm_params),
+        "realtime_random_forest": lambda: _fit_random_forest(X, y, random_forest_params, sample_weight),
+        "realtime_xgboost": lambda: _fit_xgboost(X, y, xgboost_params, sample_weight),
+        "realtime_lightgbm": lambda: _fit_lightgbm(X, y, lightgbm_params, sample_weight),
         "realtime_isolation_forest": lambda: _fit_isolation_forest(X, y, anomaly_params),
     }
 

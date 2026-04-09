@@ -84,18 +84,25 @@ def main():
             logger.info("Generating custom leak seg=%d start=%d", seg_id, start)
             frames.append(_run_custom_leak(start, seg_id, seed=seg_id * 100 + start))
 
-    # Micro leaks to force sensitivity to subtle pressure/flow deviations.
+    # Micro leaks — varied severity (0.10-0.28) so the model sees the full
+    # range of subtle signal, not just max-severity snapshots.
+    _micro_configs = [
+        # (start, max_severity, ramp, hold, recovery)
+        (12, 0.28, 18, 32, 14),
+        (36, 0.22, 22, 28, 12),
+        (72, 0.18, 25, 35, 10),
+        (20, 0.14, 30, 40, 16),
+        (50, 0.10, 35, 45, 14),
+        (8,  0.25, 20, 30, 12),
+    ]
     for seg_id in SEGMENT_IDS:
-        for start in [12, 36, 72]:
-            logger.info("Generating micro leak seg=%d start=%d", seg_id, start)
+        for start, sev, ramp, hold, rec in _micro_configs:
+            logger.info("Generating micro leak seg=%d start=%d severity=%.2f", seg_id, start, sev)
             frames.append(_run_custom_leak(
-                start,
-                seg_id,
-                seed=seg_id * 300 + start,
-                ramp=18,
-                hold=32,
-                recovery=14,
-                max_severity=0.28,
+                start, seg_id,
+                seed=seg_id * 300 + start + int(sev * 1000),
+                ramp=ramp, hold=hold, recovery=rec,
+                max_severity=sev,
             ))
 
     # Fast ruptures
@@ -108,9 +115,9 @@ def main():
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Drop ground-truth columns that won't be available at inference time
-    # but keep 'target' as the label
-    df = df.drop(columns=["leak_severity", "pump_efficiency"], errors="ignore")
+    # Keep leak_severity in the CSV — training uses it for sample weights.
+    # pump_efficiency is not needed after training.
+    df = df.drop(columns=["pump_efficiency"], errors="ignore")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUTPUT_FILE, index=False)

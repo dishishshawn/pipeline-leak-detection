@@ -218,6 +218,7 @@ def load_models(dataset_type: str = "scada") -> dict:
     }
 
 
+@st.cache_resource
 def load_live_models(dataset_type: str = "scada") -> dict:
     return {
         k: v[0]
@@ -1207,18 +1208,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
-
-total = len(filtered)
-leak_count = int(filtered["target"].sum())
-leak_rate = leak_count / total * 100 if total > 0 else 0
-alarm_count = int(filtered["alarm_triggered"].sum())
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total readings", f"{total:,}")
-col2.metric("Leak events", f"{leak_count:,}", delta=f"{leak_rate:.1f}%")
-col3.metric("Alarms triggered", f"{alarm_count:,}")
-col4.metric("Segments", df["segment_id"].nunique())
+live_tab, historical_tab = st.tabs(["Live Simulator", "Historical Analysis"])
 
 st.markdown("---")
 
@@ -1255,6 +1245,8 @@ with live_tab:
     )
 
     live_models = load_live_models(LIVE_MODEL_DATASET)
+    model_metrics = load_model_metrics()
+    live_models_filtered = _filter_by_score(live_models, model_metrics)
     manual_leak_presets = get_manual_leak_presets()
     manual_leak_map = {preset.label: preset for preset in manual_leak_presets}
 
@@ -1264,59 +1256,189 @@ with live_tab:
     seed = 42
     step_minutes = 1
     selected_preset_key = "steady_state"
+    segment_count = len(SEGMENT_NAMES)
 
-    control_col1, control_col3 = st.columns(2)
-    with control_col1:
-        _default_segs = list(SEGMENT_NAMES.keys())[:3]
-        _selected_seg_names = st.multiselect(
-            "Display segments",
-            options=list(SEGMENT_NAMES.values()),
-            default=[SEGMENT_NAMES[s] for s in _default_segs],
-            key="live_display_segment_names",
+    # Initialise session_state defaults for controls so they're readable before
+    # the fragment first runs (e.g. for the ATLAS banner above).
+    st.session_state.setdefault("live_model_name", ATLAS_MODEL)
+    st.session_state.setdefault("live_backend_label", "Lightweight (Fast)")
+
+    if hasattr(st, "fragment"):
+        @st.fragment
+        def _controls_fragment() -> None:
+            """Settings + Start/Pause/Restart — isolated so widget changes don't
+            trigger a full-page rerun."""
+            control_col1, control_col3 = st.columns(2)
+            with control_col1:
+                _default_segs = list(SEGMENT_NAMES.keys())[:3]
+                _selected_seg_names = st.multiselect(
+                    "Display segments",
+                    options=list(SEGMENT_NAMES.values()),
+                    default=[SEGMENT_NAMES[s] for s in _default_segs],
+                    key="live_display_segment_names",
+                )
+                _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+                _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
+                st.session_state["live_display_segments"] = _display_segment_ids
+
+            with control_col3:
+                model_names = list(live_models_filtered.keys()) if live_models_filtered else ["No realtime models found"]
+                _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
+                st.selectbox(
+                    "Scoring model",
+                    options=model_names,
+                    index=_atlas_index,
+                    format_func=lambda name: format_model_option(name, model_metrics),
+                    key="live_model_name",
+                )
+                st.selectbox(
+                    "Simulator backend",
+                    options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
+                    index=0,
+                    key="live_backend_label",
+                    help="Physics-Backed mode may be slower on first initialization.",
+                )
+                _backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+                if _backend_mode == "physics":
+                    st.info("Physics mode selected. First initialization may be slower.")
+
+            _backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+            _signature = simulator_signature(
+                selected_preset_key,
+                segment_count,
+                tick_seconds,
+                step_minutes,
+                history_limit,
+                int(seed),
+                steps_per_refresh,
+                _backend_mode,
+            )
+
+            button_col1, button_col2, button_col3 = st.columns(3)
+            if button_col1.button("Start / Resume", width="stretch"):
+                _sim = st.session_state.get("live_simulator")
+                if _sim is None or st.session_state.get("live_signature") != _signature:
+                    _sim = build_simulator_backend(
+                        _backend_mode,
+                        selected_preset_key,
+                        segment_count,
+                        tick_seconds,
+                        step_minutes,
+                        history_limit,
+                        int(seed),
+                    )
+                    st.session_state["live_simulator"] = _sim
+                    st.session_state["live_history"] = pd.DataFrame()
+                    st.session_state["live_signature"] = _signature
+                    st.session_state["live_backend"] = _backend_mode
+                    clear_live_score_cache()
+                _sim.start()
+                st.session_state["live_running"] = True
+                st.rerun()
+
+            if button_col2.button("Pause", width="stretch"):
+                _sim = st.session_state.get("live_simulator")
+                if _sim is not None:
+                    _sim.stop()
+                st.session_state["live_running"] = False
+                st.rerun()
+
+            if button_col3.button("Restart", width="stretch"):
+                _sim = build_simulator_backend(
+                    _backend_mode,
+                    selected_preset_key,
+                    segment_count,
+                    tick_seconds,
+                    step_minutes,
+                    history_limit,
+                    int(seed),
+                )
+                st.session_state["live_simulator"] = _sim
+                st.session_state["live_history"] = pd.DataFrame()
+                st.session_state["live_signature"] = _signature
+                st.session_state["live_backend"] = _backend_mode
+                clear_live_score_cache()
+                _sim.start()
+                st.session_state["live_running"] = True
+                st.rerun()
+
+        _controls_fragment()
+    else:
+        # Fallback for older Streamlit without fragment support
+        control_col1, control_col3 = st.columns(2)
+        with control_col1:
+            _default_segs = list(SEGMENT_NAMES.keys())[:3]
+            _selected_seg_names = st.multiselect(
+                "Display segments",
+                options=list(SEGMENT_NAMES.values()),
+                default=[SEGMENT_NAMES[s] for s in _default_segs],
+                key="live_display_segment_names",
+            )
+            _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+            _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
+            st.session_state["live_display_segments"] = _display_segment_ids
+
+        with control_col3:
+            model_names = list(live_models_filtered.keys()) if live_models_filtered else ["No realtime models found"]
+            _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
+            st.selectbox(
+                "Scoring model",
+                options=model_names,
+                index=_atlas_index,
+                format_func=lambda name: format_model_option(name, model_metrics),
+                key="live_model_name",
+            )
+            st.selectbox(
+                "Simulator backend",
+                options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
+                index=0,
+                key="live_backend_label",
+                help="Physics-Backed mode may be slower on first initialization.",
+            )
+            backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+            if backend_mode == "physics":
+                st.info("Physics mode selected. First initialization may be slower.")
+
+        backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+        signature = simulator_signature(
+            selected_preset_key,
+            segment_count,
+            tick_seconds,
+            step_minutes,
+            history_limit,
+            int(seed),
+            steps_per_refresh,
+            backend_mode,
         )
-        _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
-        _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
-        st.session_state["live_display_segments"] = _display_segment_ids
-        segment_count = len(SEGMENT_NAMES)
 
-    with control_col3:
-        model_metrics = load_model_metrics()
-        live_models = _filter_by_score(live_models, model_metrics)
-        model_names = list(live_models.keys()) if live_models else ["No realtime models found"]
-        _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
-        selected_live_model = st.selectbox(
-            "Scoring model",
-            options=model_names,
-            index=_atlas_index,
-            format_func=lambda name: format_model_option(name, model_metrics),
-            key="live_model_name",
-        )
-        backend_choice = st.selectbox(
-            "Simulator backend",
-            options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
-            index=0,
-            key="live_backend_label",
-            help="Physics-Backed mode may be slower on first initialization.",
-        )
-        backend_mode = "physics" if "Physics" in backend_choice else "lightweight"
-        if backend_mode == "physics":
-            st.info("Physics mode selected. First initialization may be slower.")
+        button_col1, button_col2, button_col3 = st.columns(3)
+        if button_col1.button("Start / Resume", width="stretch"):
+            simulator = st.session_state.get("live_simulator")
+            if simulator is None or st.session_state.get("live_signature") != signature:
+                simulator = build_simulator_backend(
+                    backend_mode,
+                    selected_preset_key,
+                    segment_count,
+                    tick_seconds,
+                    step_minutes,
+                    history_limit,
+                    int(seed),
+                )
+                st.session_state["live_simulator"] = simulator
+                st.session_state["live_history"] = pd.DataFrame()
+                st.session_state["live_signature"] = signature
+                st.session_state["live_backend"] = backend_mode
+                clear_live_score_cache()
+            simulator.start()
+            st.session_state["live_running"] = True
 
-    signature = simulator_signature(
-        selected_preset_key,
-        segment_count,
-        tick_seconds,
-        step_minutes,
-        history_limit,
-        int(seed),
-        steps_per_refresh,
-        backend_mode,
-    )
+        if button_col2.button("Pause", width="stretch"):
+            simulator = st.session_state.get("live_simulator")
+            if simulator is not None:
+                simulator.stop()
+            st.session_state["live_running"] = False
 
-    button_col1, button_col2, button_col3 = st.columns(3)
-    if button_col1.button("Start / Resume", width="stretch"):
-        simulator = st.session_state.get("live_simulator")
-        if simulator is None or st.session_state.get("live_signature") != signature:
+        if button_col3.button("Restart", width="stretch"):
             simulator = build_simulator_backend(
                 backend_mode,
                 selected_preset_key,
@@ -1331,32 +1453,8 @@ with live_tab:
             st.session_state["live_signature"] = signature
             st.session_state["live_backend"] = backend_mode
             clear_live_score_cache()
-        simulator.start()
-        st.session_state["live_running"] = True
-
-    if button_col2.button("Pause", width="stretch"):
-        simulator = st.session_state.get("live_simulator")
-        if simulator is not None:
-            simulator.stop()
-        st.session_state["live_running"] = False
-
-    if button_col3.button("Restart", width="stretch"):
-        simulator = build_simulator_backend(
-            backend_mode,
-            selected_preset_key,
-            segment_count,
-            tick_seconds,
-            step_minutes,
-            history_limit,
-            int(seed),
-        )
-        st.session_state["live_simulator"] = simulator
-        st.session_state["live_history"] = pd.DataFrame()
-        st.session_state["live_signature"] = signature
-        st.session_state["live_backend"] = backend_mode
-        clear_live_score_cache()
-        simulator.start()
-        st.session_state["live_running"] = True
+            simulator.start()
+            st.session_state["live_running"] = True
 
     st.markdown("---")
 
@@ -1457,10 +1555,12 @@ with live_tab:
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")
         def _live_fragment() -> None:
-            render_live_view(live_models, selected_live_model, steps_per_refresh)
+            _model_name = st.session_state.get("live_model_name", ATLAS_MODEL)
+            render_live_view(live_models_filtered, _model_name, steps_per_refresh)
         _live_fragment()
     else:
-        render_live_view(live_models, selected_live_model, steps_per_refresh)
+        _model_name = st.session_state.get("live_model_name", ATLAS_MODEL)
+        render_live_view(live_models_filtered, _model_name, steps_per_refresh)
 
     live_scored = st.session_state.get("live_scored_history", pd.DataFrame())
     if not live_scored.empty and "model_alert" in live_scored.columns:
