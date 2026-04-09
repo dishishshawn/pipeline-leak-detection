@@ -43,7 +43,6 @@ from src.simulation import (
     build_manual_leak_scenarios,
     build_scenarios,
     get_manual_leak_presets,
-    get_scenario_presets,
     make_default_profiles,
 )
 
@@ -51,6 +50,16 @@ st.set_page_config(
     page_title="Pipeline Leak Detection",
     page_icon="W",
     layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+    [data-testid="collapsedControl"] { display: none; }
+    [data-testid="stSidebar"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +97,15 @@ LIVE_MODEL_ALLOWLIST = {
 }
 EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
 DEFAULT_ALERT_THRESHOLD = 0.5
+
+SEGMENT_NAMES: dict[int, str] = {
+    1: "Inlet Station IS-01",
+    2: "Booster Pump BP-02",
+    3: "Midline Valve VS-03",
+    4: "Compressor Station CS-04",
+    5: "Offtake Junction OJ-05",
+    6: "Terminal Station TS-06",
+}
 
 # ATLAS: the single recommended model for live demos.
 # Selection rationale:
@@ -940,8 +958,10 @@ def _prepare_live_component_data(
     # Segment health cards
     segments = []
     for _, row in latest_rows.iterrows():
+        seg_id = int(row["segment_id"])
         segments.append({
-            "id": int(row["segment_id"]),
+            "id": seg_id,
+            "name": SEGMENT_NAMES.get(seg_id, f"Segment {seg_id}"),
             "pressure": _safe(float(row["pressure"])),
             "flowRate": _safe(float(row["flow_rate"])),
             "temperature": _safe(float(row.get("temperature", 0))),
@@ -949,7 +969,7 @@ def _prepare_live_component_data(
             "pumpEfficiency": _safe(float(row.get("pump_efficiency", 1))),
             "healthColor": _segment_health_color(row),
             "healthLabel": _segment_health_label(row),
-            "modelAlert": int(row["segment_id"]) in alert_segments,
+            "modelAlert": seg_id in alert_segments,
         })
 
     # Summary metrics
@@ -969,6 +989,7 @@ def _prepare_live_component_data(
         seg = history[history["segment_id"] == seg_id].sort_values("timestamp")
         entry = {
             "segmentId": int(seg_id),
+            "segmentName": SEGMENT_NAMES.get(int(seg_id), f"Segment {seg_id}"),
             "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
             "pressure": seg["pressure"].fillna(0).round(3).tolist(),
             "flowRate": seg["flow_rate"].fillna(0).round(3).tolist(),
@@ -985,6 +1006,7 @@ def _prepare_live_component_data(
             seg = scored[scored["segment_id"] == seg_id].sort_values("timestamp")
             score_data.append({
                 "segmentId": int(seg_id),
+                "segmentName": SEGMENT_NAMES.get(int(seg_id), f"Segment {seg_id}"),
                 "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
                 "leakScore": seg["leak_score"].fillna(0).round(3).tolist(),
                 "modelAlert": seg["model_alert"].tolist() if "model_alert" in seg.columns else [],
@@ -994,8 +1016,10 @@ def _prepare_live_component_data(
     marker_list = []
     if not markers.empty:
         for _, m in markers.iterrows():
+            _mid = int(m["segment_id"])
             marker_list.append({
-                "segmentId": int(m["segment_id"]),
+                "segmentId": _mid,
+                "segmentName": SEGMENT_NAMES.get(_mid, f"Segment {_mid}"),
                 "timestamp": m["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
                 "pressure": _safe(float(m["pressure"])),
                 "flowRate": _safe(float(m["flow_rate"])),
@@ -1009,8 +1033,10 @@ def _prepare_live_component_data(
             sm_df, on=["segment_id", "timestamp"], how="inner"
         )
         for _, row in sv.iterrows():
+            _smid = int(row["segment_id"])
             score_markers.append({
-                "segmentId": int(row["segment_id"]),
+                "segmentId": _smid,
+                "segmentName": SEGMENT_NAMES.get(_smid, f"Segment {_smid}"),
                 "timestamp": row["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
                 "leakScore": _safe(float(row["leak_score"])),
             })
@@ -1099,10 +1125,15 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     markers = ideal_detection_markers(history)
     alert_threshold = get_alert_threshold(selected_live_model)
 
+    display_segs = st.session_state.get("live_display_segments") or sorted(history["segment_id"].unique().tolist())
+    display_history = history[history["segment_id"].isin(display_segs)]
+    display_scored = scored[scored["segment_id"].isin(display_segs)] if not scored.empty else scored
+    display_markers = markers[markers["segment_id"].isin(display_segs)] if not markers.empty else markers
+
     data = _prepare_live_component_data(
-        history=history,
-        scored=scored,
-        markers=markers,
+        history=display_history,
+        scored=display_scored,
+        markers=display_markers,
         running=running,
         selected_live_model=selected_live_model,
         model_exists=model is not None,
@@ -1114,9 +1145,6 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
 
 ensure_live_state()
 
-st.sidebar.title("Pipeline Leak Detection")
-st.sidebar.markdown("---")
-
 dataset_type = "scada"
 selected_dataset_name = "SCADA Pipeline"
 data_path = SAMPLE_DATA_PATH
@@ -1127,42 +1155,16 @@ except Exception as exc:
     st.error(f"Could not load data: {exc}")
     st.stop()
 
-segments = sorted(df["segment_id"].unique())
-selected_segments = st.sidebar.multiselect(
-    "Pipeline segments",
-    segments,
-    default=segments,
-    format_func=lambda s: f"Segment {s}",
-    help="Filter which pipeline segments are shown in Historical Analysis.",
-)
-
-min_ts = df["timestamp"].min()
-max_ts = df["timestamp"].max()
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(min_ts.date(), max_ts.date()),
-    min_value=min_ts.date(),
-    max_value=max_ts.date(),
-)
-
-filtered = df[df["segment_id"].isin(selected_segments)]
-if len(date_range) == 2:
-    filtered = filtered[
-        (filtered["timestamp"].dt.date >= date_range[0])
-        & (filtered["timestamp"].dt.date <= date_range[1])
-    ]
+filtered = df
 
 try:
     models = load_models(dataset_type)
-    st.sidebar.success(f"Loaded {len(models)} models for {selected_dataset_name}")
 except Exception as exc:
-    st.sidebar.warning(f"Could not load models: {exc}")
+    logger.warning("Could not load models: %s", exc)
     models = {}
 
 
 st.title("Pipeline Leak Detection Dashboard")
-
-historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
 
 # --- Hero metric banner ---
 _eval_path = Path("reports/evaluation_results.json")
@@ -1205,6 +1207,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
+
 total = len(filtered)
 leak_count = int(filtered["target"].sum())
 leak_rate = leak_count / total * 100 if total > 0 else 0
@@ -1214,7 +1218,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total readings", f"{total:,}")
 col2.metric("Leak events", f"{leak_count:,}", delta=f"{leak_rate:.1f}%")
 col3.metric("Alarms triggered", f"{alarm_count:,}")
-col4.metric("Segments", len(selected_segments))
+col4.metric("Segments", df["segment_id"].nunique())
 
 st.markdown("---")
 
@@ -1251,8 +1255,6 @@ with live_tab:
     )
 
     live_models = load_live_models(LIVE_MODEL_DATASET)
-    preset_definitions = get_scenario_presets()
-    preset_map = {preset.key: preset for preset in preset_definitions}
     manual_leak_presets = get_manual_leak_presets()
     manual_leak_map = {preset.label: preset for preset in manual_leak_presets}
 
@@ -1261,16 +1263,21 @@ with live_tab:
     history_limit = 360
     seed = 42
     step_minutes = 1
+    selected_preset_key = "steady_state"
 
     control_col1, control_col3 = st.columns(2)
     with control_col1:
-        preset_label = st.selectbox(
-            "Scenario preset",
-            options=[preset.label for preset in preset_definitions],
-            index=1,
-            key="live_preset_label",
+        _default_segs = list(SEGMENT_NAMES.keys())[:3]
+        _selected_seg_names = st.multiselect(
+            "Display segments",
+            options=list(SEGMENT_NAMES.values()),
+            default=[SEGMENT_NAMES[s] for s in _default_segs],
+            key="live_display_segment_names",
         )
-        segment_count = st.slider("Segments", min_value=2, max_value=6, value=3, key="live_segment_count")
+        _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+        _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
+        st.session_state["live_display_segments"] = _display_segment_ids
+        segment_count = len(SEGMENT_NAMES)
 
     with control_col3:
         model_metrics = load_model_metrics()
@@ -1294,11 +1301,6 @@ with live_tab:
         backend_mode = "physics" if "Physics" in backend_choice else "lightweight"
         if backend_mode == "physics":
             st.info("Physics mode selected. First initialization may be slower.")
-        st.markdown("**Preset description**")
-        selected_preset_key = next(
-            preset.key for preset in preset_definitions if preset.label == preset_label
-        )
-        st.write(preset_map[selected_preset_key].description)
 
     signature = simulator_signature(
         selected_preset_key,
@@ -1364,11 +1366,8 @@ with live_tab:
         @st.fragment
         def _trigger_fragment() -> None:
             sim = st.session_state.get("live_simulator")
-            seg_options = (
-                sim.segment_ids
-                if sim is not None
-                else list(range(1, segment_count + 1))
-            )
+            raw_ids = sim.segment_ids if sim is not None else list(SEGMENT_NAMES.keys())
+            seg_name_options = [SEGMENT_NAMES.get(i, f"Segment {i}") for i in raw_ids]
             t_col1, t_col2, t_col3 = st.columns([2, 1, 1])
             with t_col1:
                 t_label = st.selectbox(
@@ -1378,11 +1377,13 @@ with live_tab:
                 )
                 st.caption(manual_leak_map[t_label].description)
             with t_col2:
-                t_segment = st.selectbox(
+                t_segment_name = st.selectbox(
                     "Target segment",
-                    options=seg_options,
+                    options=seg_name_options,
                     key="manual_leak_segment",
                 )
+                _seg_name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+                t_segment = _seg_name_to_id.get(t_segment_name, raw_ids[0] if raw_ids else 1)
             with t_col3:
                 t_now = st.button("Start Leak Now", width="stretch")
 
@@ -1404,15 +1405,16 @@ with live_tab:
                     if not st.session_state.get("live_running"):
                         simulator.start()
                         st.session_state["live_running"] = True
-                    st.success(f"Injected {t_label} on segment {t_segment}.")
+                    st.success(f"Injected {t_label} on {t_segment_name}.")
         _trigger_fragment()
     else:
         simulator_for_trigger = st.session_state.get("live_simulator")
-        trigger_segment_options = (
+        trigger_raw_ids = (
             simulator_for_trigger.segment_ids
             if simulator_for_trigger is not None
-            else list(range(1, segment_count + 1))
+            else list(SEGMENT_NAMES.keys())
         )
+        trigger_seg_name_options = [SEGMENT_NAMES.get(i, f"Segment {i}") for i in trigger_raw_ids]
         trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
         with trigger_col1:
             trigger_label = st.selectbox(
@@ -1422,11 +1424,13 @@ with live_tab:
             )
             st.caption(manual_leak_map[trigger_label].description)
         with trigger_col2:
-            trigger_segment = st.selectbox(
+            trigger_segment_name = st.selectbox(
                 "Target segment",
-                options=trigger_segment_options,
+                options=trigger_seg_name_options,
                 key="manual_leak_segment",
             )
+            _trigger_name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+            trigger_segment = _trigger_name_to_id.get(trigger_segment_name, trigger_raw_ids[0] if trigger_raw_ids else 1)
         with trigger_col3:
             trigger_now = st.button("Start Leak Now", width="stretch")
 
@@ -1448,7 +1452,7 @@ with live_tab:
                 if not st.session_state.get("live_running"):
                     simulator.start()
                     st.session_state["live_running"] = True
-                st.success(f"Injected {trigger_label} on segment {trigger_segment}.")
+                st.success(f"Injected {trigger_label} on {trigger_segment_name}.")
 
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")

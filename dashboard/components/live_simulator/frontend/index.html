@@ -355,7 +355,7 @@ function renderSegmentCards(data) {
     for (const s of segs) {
         const emoji = HEALTH_EMOJI[s.healthColor] || "\u26AA";
         h += '<div class="card">' +
-            '<div class="card-label">Seg ' + s.id + '</div>' +
+            '<div class="card-label">' + esc(s.name || ("Seg " + s.id)) + '</div>' +
             '<div class="card-value">' + fmt(s.pressure) + ' bar</div>' +
             '<div class="card-delta">' + fmt(s.flowRate, 2) + ' m\u00b3/min</div>' +
             '<div class="card-status health-' + s.healthColor + '">' + emoji + ' ' + esc(s.healthLabel) + '</div>' +
@@ -415,7 +415,7 @@ function segmentTraces(chartData, yKey) {
         return {
             x: seg.timestamps, y: seg[yKey] || [],
             type: "scatter", mode: "lines",
-            name: "Seg " + seg.segmentId,
+            name: seg.segmentName || ("Seg " + seg.segmentId),
             line: { color: SEGMENT_PALETTE[i % SEGMENT_PALETTE.length], width: 1.5 },
         };
     });
@@ -428,7 +428,7 @@ function addMarkerTrace(traces, markers, yKey) {
         y: markers.map(function(m){ return m[yKey] || 0; }),
         type: "scatter", mode: "markers+text",
         marker: { size: 11, color: "#d62728", symbol: "diamond" },
-        text: markers.map(function(m){ return "Ideal S" + m.segmentId; }),
+        text: markers.map(function(m){ return "Ideal " + (m.segmentName || ("S" + m.segmentId)); }),
         textposition: "top center",
         textfont: { size: 9, color: "#d62728" },
         name: "Ideal detection",
@@ -485,7 +485,7 @@ function renderScoreChart(data) {
         return {
             x: seg.timestamps, y: seg.leakScore || [],
             type: "scatter", mode: "lines",
-            name: "Seg " + seg.segmentId,
+            name: seg.segmentName || ("Seg " + seg.segmentId),
             line: { color: SEGMENT_PALETTE[i % SEGMENT_PALETTE.length], width: 1.5 },
         };
     });
@@ -518,7 +518,7 @@ function renderScoreChart(data) {
             y: sm.map(function(m){ return m.leakScore; }),
             type: "scatter", mode: "markers+text",
             marker: { size: 11, color: "#d62728", symbol: "diamond" },
-            text: sm.map(function(m){ return "Ideal S" + m.segmentId; }),
+            text: sm.map(function(m){ return "Ideal " + (m.segmentName || ("S" + m.segmentId)); }),
             textposition: "top center",
             textfont: { size: 9, color: "#d62728" },
             name: "Ideal detection",
