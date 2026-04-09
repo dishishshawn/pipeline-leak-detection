@@ -1117,20 +1117,9 @@ ensure_live_state()
 st.sidebar.title("Pipeline Leak Detection")
 st.sidebar.markdown("---")
 
-dataset_options = {
-    "SCADA Pipeline": "scada",
-    "Water Leak (labels unavailable)": "water_leak",
-}
-selected_dataset_name = st.sidebar.selectbox(
-    "Dataset Type",
-    list(dataset_options.keys()),
-    index=0,
-)
-dataset_type = dataset_options[selected_dataset_name]
-
-default_data_path = SAMPLE_DATA_PATH if dataset_type == "scada" else "data/raw/water_leak/water_leak_detection_1000_rows.csv"
-with st.sidebar.expander("Advanced"):
-    data_path = st.text_input("Data path", value=default_data_path)
+dataset_type = "scada"
+selected_dataset_name = "SCADA Pipeline"
+data_path = SAMPLE_DATA_PATH
 
 try:
     df = load_data(data_path, dataset_type)
@@ -1253,8 +1242,7 @@ with live_tab:
             'Adaptive Telemetry Leak Alert System</span>'
             '<br><span style="color:#9ab8d4;font-size:.8rem;">'
             'ROC-AUC 0.9998 &bull; Micro-leak sensitivity 89% &bull; '
-            'FPR 0.06% (steady-state) &bull; Detection delay 0.8 steps &bull; '
-            'Works on both Lightweight and Physics backends'
+            'FPR 0.06% (steady-state) &bull; Detection delay 0.8 steps'
             '</span></div>',
             unsafe_allow_html=True,
         )
@@ -1268,7 +1256,13 @@ with live_tab:
     manual_leak_presets = get_manual_leak_presets()
     manual_leak_map = {preset.label: preset for preset in manual_leak_presets}
 
-    control_col1, control_col2, control_col3 = st.columns(3)
+    tick_seconds = 1
+    steps_per_refresh = 5
+    history_limit = 360
+    seed = 42
+    step_minutes = 1
+
+    control_col1, control_col3 = st.columns(2)
     with control_col1:
         preset_label = st.selectbox(
             "Scenario preset",
@@ -1277,13 +1271,6 @@ with live_tab:
             key="live_preset_label",
         )
         segment_count = st.slider("Segments", min_value=2, max_value=6, value=3, key="live_segment_count")
-        step_minutes = st.slider("Simulated minutes per tick", min_value=1, max_value=15, value=1, key="live_step_minutes")
-
-    with control_col2:
-        tick_seconds = st.slider("Real seconds per tick", min_value=1, max_value=5, value=1, key="live_tick_seconds")
-        steps_per_refresh = st.slider("Simulation speed", min_value=1, max_value=20, value=5, help="How many simulator ticks to advance on each dashboard refresh.", key="live_steps_per_refresh")
-        history_limit = st.slider("History per segment", min_value=120, max_value=1440, value=360, step=60, key="live_history_limit")
-        seed = st.number_input("Random seed", min_value=1, max_value=999999, value=42, step=1, key="live_seed")
 
     with control_col3:
         model_metrics = load_model_metrics()
@@ -1297,10 +1284,9 @@ with live_tab:
             format_func=lambda name: format_model_option(name, model_metrics),
             key="live_model_name",
         )
-        st.caption("Live simulator scoring is limited to live-safe models from models/realtime, models/petrobras, and models/physics_sim.")
         backend_choice = st.selectbox(
             "Simulator backend",
-            options=["Lightweight (Fast, Demo-Safe)", "Physics-Backed (Realistic, Slower)"],
+            options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
             index=0,
             key="live_backend_label",
             help="Physics-Backed mode may be slower on first initialization.",
@@ -1313,9 +1299,6 @@ with live_tab:
             preset.key for preset in preset_definitions if preset.label == preset_label
         )
         st.write(preset_map[selected_preset_key].description)
-
-    backend_emoji = "⚡" if backend_mode == "lightweight" else "🔬"
-    st.caption(f"{backend_emoji} Active backend: **{backend_choice}**")
 
     signature = simulator_signature(
         selected_preset_key,
