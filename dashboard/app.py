@@ -1376,48 +1376,96 @@ with live_tab:
     st.markdown("---")
 
     st.markdown("**Manual Leak Trigger**")
-    simulator_for_trigger = st.session_state.get("live_simulator")
-    trigger_segment_options = (
-        simulator_for_trigger.segment_ids
-        if simulator_for_trigger is not None
-        else list(range(1, segment_count + 1))
-    )
-    trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
-    with trigger_col1:
-        trigger_label = st.selectbox(
-            "Leak type",
-            options=[preset.label for preset in manual_leak_presets],
-            key="manual_leak_type",
-        )
-        st.caption(manual_leak_map[trigger_label].description)
-    with trigger_col2:
-        trigger_segment = st.selectbox(
-            "Target segment",
-            options=trigger_segment_options,
-            key="manual_leak_segment",
-        )
-    with trigger_col3:
-        trigger_now = st.button("Start Leak Now", width="stretch")
 
-    if trigger_now:
-        simulator = st.session_state.get("live_simulator")
-        if simulator is None:
-            st.warning("Start the simulator before injecting a live leak event.")
-        elif isinstance(simulator, PhysicsSimulatorBackend):
-            st.info(
-                "Manual leak triggers are not supported in Physics mode — "
-                "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+    if hasattr(st, "fragment"):
+        @st.fragment
+        def _trigger_fragment() -> None:
+            sim = st.session_state.get("live_simulator")
+            seg_options = (
+                sim.segment_ids
+                if sim is not None
+                else list(range(1, segment_count + 1))
             )
-        else:
-            inject_manual_leak(
-                simulator,
-                manual_leak_map[trigger_label].key,
-                int(trigger_segment),
+            t_col1, t_col2, t_col3 = st.columns([2, 1, 1])
+            with t_col1:
+                t_label = st.selectbox(
+                    "Leak type",
+                    options=[preset.label for preset in manual_leak_presets],
+                    key="manual_leak_type",
+                )
+                st.caption(manual_leak_map[t_label].description)
+            with t_col2:
+                t_segment = st.selectbox(
+                    "Target segment",
+                    options=seg_options,
+                    key="manual_leak_segment",
+                )
+            with t_col3:
+                t_now = st.button("Start Leak Now", width="stretch")
+
+            if t_now:
+                simulator = st.session_state.get("live_simulator")
+                if simulator is None:
+                    st.warning("Start the simulator before injecting a live leak event.")
+                elif isinstance(simulator, PhysicsSimulatorBackend):
+                    st.info(
+                        "Manual leak triggers are not supported in Physics mode — "
+                        "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+                    )
+                else:
+                    inject_manual_leak(
+                        simulator,
+                        manual_leak_map[t_label].key,
+                        int(t_segment),
+                    )
+                    if not st.session_state.get("live_running"):
+                        simulator.start()
+                        st.session_state["live_running"] = True
+                    st.success(f"Injected {t_label} on segment {t_segment}.")
+        _trigger_fragment()
+    else:
+        simulator_for_trigger = st.session_state.get("live_simulator")
+        trigger_segment_options = (
+            simulator_for_trigger.segment_ids
+            if simulator_for_trigger is not None
+            else list(range(1, segment_count + 1))
+        )
+        trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
+        with trigger_col1:
+            trigger_label = st.selectbox(
+                "Leak type",
+                options=[preset.label for preset in manual_leak_presets],
+                key="manual_leak_type",
             )
-            if not st.session_state.get("live_running"):
-                simulator.start()
-                st.session_state["live_running"] = True
-            st.success(f"Injected {trigger_label} on segment {trigger_segment}.")
+            st.caption(manual_leak_map[trigger_label].description)
+        with trigger_col2:
+            trigger_segment = st.selectbox(
+                "Target segment",
+                options=trigger_segment_options,
+                key="manual_leak_segment",
+            )
+        with trigger_col3:
+            trigger_now = st.button("Start Leak Now", width="stretch")
+
+        if trigger_now:
+            simulator = st.session_state.get("live_simulator")
+            if simulator is None:
+                st.warning("Start the simulator before injecting a live leak event.")
+            elif isinstance(simulator, PhysicsSimulatorBackend):
+                st.info(
+                    "Manual leak triggers are not supported in Physics mode — "
+                    "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+                )
+            else:
+                inject_manual_leak(
+                    simulator,
+                    manual_leak_map[trigger_label].key,
+                    int(trigger_segment),
+                )
+                if not st.session_state.get("live_running"):
+                    simulator.start()
+                    st.session_state["live_running"] = True
+                st.success(f"Injected {trigger_label} on segment {trigger_segment}.")
 
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")
