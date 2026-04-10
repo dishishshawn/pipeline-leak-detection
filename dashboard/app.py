@@ -1333,6 +1333,25 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
 
 ensure_live_state()
 
+# Auto-start the live simulator on first load so the demo is running immediately.
+if st.session_state.get("live_simulator") is None:
+    _auto_sim = build_live_simulator(
+        preset_key="steady_state",
+        segment_count=len(SEGMENT_NAMES),
+        tick_seconds=1,
+        step_minutes=1,
+        history_limit=360,
+        seed=42,
+    )
+    _auto_sim.start()
+    st.session_state["live_simulator"] = _auto_sim
+    st.session_state["live_history"] = pd.DataFrame()
+    st.session_state["live_signature"] = simulator_signature(
+        "steady_state", len(SEGMENT_NAMES), 1, 1, 360, 42, 5, "lightweight",
+    )
+    st.session_state["live_backend"] = "lightweight"
+    st.session_state["live_running"] = True
+
 dataset_type = "scada"
 selected_dataset_name = "SCADA Pipeline"
 data_path = SAMPLE_DATA_PATH
