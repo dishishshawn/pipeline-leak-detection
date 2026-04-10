@@ -156,23 +156,23 @@ def predict(model, df):
 ### Threshold Calibration
 
 `src/evaluation/harness.py` — `calibrate_threshold()`:
-1. Compute noise ceiling: 95th percentile of non-leak scores (steady_state + demand_shock)
-2. Compute leak onset signal: median score at first leak rows in slow_seep
-3. Threshold = midpoint between noise ceiling and leak onset
-4. Floor: 0.15, cap: 0.85
+1. Compute steady-state noise ceiling: 95th percentile of steady_state scores (primary constraint, 70% weight)
+2. Compute demand-shock ceiling: 90th percentile of demand_shock scores (secondary, 30% weight)
+3. Threshold = blended ceiling * 1.10 + 0.005 margin
+4. Floor: 0.02, cap: 0.85
 
 Current calibrated thresholds (from `reports/evaluation_results.json`):
-- Realtime RF: 0.15
-- Realtime XGBoost: 0.15 (ATLAS primary)
-- Realtime LightGBM: 0.15
-- Realtime Hybrid Ensemble: 0.238
-- Robust models: 0.35-0.42 range
-- Petrobras RF: 0.349, Petrobras XGBoost/LGB/LR: 0.15
+- Realtime XGBoost: 0.02 (ATLAS primary)
+- Realtime RF: 0.07
+- Realtime LightGBM: 0.02
+- Realtime Hybrid Ensemble: 0.22
+- Robust models: 0.44-0.53 range
+- Petrobras RF: 0.40, Petrobras XGBoost: 0.04
 
-Micro-leak sensitivity (after CUSUM/divergence feature additions):
-- Realtime XGBoost: 73% (up from 38% before micro-leak features)
-- Realtime RF: 46%
-- Realtime Hybrid Ensemble: 64%
+Micro-leak sensitivity (after expanding-window + EMA feature additions):
+- Realtime XGBoost: 95% (up from 73% after CUSUM, 38% before micro-leak features)
+- Realtime RF: varies by run
+- Realtime Hybrid Ensemble: varies by run
 
 ### Physics Simulator
 
@@ -207,6 +207,13 @@ All predict calls are wrapped in try/except to prevent crashes. Uses `width="str
   - `pressure_cusum_neg30` — CUSUM cumulative negative pressure drop (30-step window)
   - `pressure_flow_divergence` — normalized pressure-flow trend divergence
   - `pressure_neg_streak15` — sustained negative pressure streak count (15-step window)
+- Advanced micro-leak features (key to 95% sensitivity):
+  - `pressure_ema_dev`, `flow_ema_dev` — EMA drift detector (span=20)
+  - `pressure_accel` — pressure acceleration (second derivative of pressure)
+  - `flow_cusum_neg30` — cumulative negative flow deficit (30-step window)
+  - `pressure_baseline_pct` — pressure deviation as fraction of 20-step baseline
+  - `pressure_baseline60_dev`, `flow_baseline60_dev` — 90-step ultra-long baseline deviation
+  - `pressure_expanding_dev`, `flow_expanding_dev` — expanding-window deviation (never adapts)
 
 `src/models/physics_wrapper.py` — `PhysicsModelWrapper._engineer_features(df)`:
 - 27 features from raw SCADA columns (P_inlet, P_mid, P_outlet, Q_inlet, Q_outlet, T_*)
