@@ -82,9 +82,10 @@ src/
   models/
     predict.py             Unified prediction layer (routes PhysicsModelWrapper)
     artifacts.py           Model discovery with priority ordering
+    atlas.py               ATLAS model serving layer (caching, fallback, latency monitoring)
     physics_wrapper.py     On-the-fly feature engineering for physics models
     train.py               Basic training (LR, RF)
-    realtime_train.py      Realtime model training pipeline
+    realtime_train.py      Realtime model training pipeline (micro-leak sample weight: 5x)
     realtime.py            Custom model classes (IsolationForestLeakDetector, etc.)
     evaluate.py            Classification metrics (confusion matrix, ROC, reports)
   evaluation/
@@ -125,6 +126,16 @@ def predict(model, df):
     return estimator.predict(X)
 ```
 
+### ATLAS Model Serving Layer
+
+`src/models/atlas.py` — Deployment infrastructure for the winning model:
+- **Primary model:** Realtime XGBoost (`ATLAS_MODEL = "Realtime Xgboost"` in `dashboard/app.py`)
+- Automatic best-model selection with configurable override
+- LRU prediction cache, batch prediction, latency monitoring
+- Fallback cascade: top-2 candidate models tried in order if primary fails
+- Default candidate order in `atlas.py`: XGBoost > RF > LightGBM > Hybrid Ensemble > Petrobras models
+- Hot-swap via `server.swap_primary()` or `server.set_primary_by_label()`
+
 ### Model Artifact Discovery
 
 `src/models/artifacts.py` scans directories with priority:
@@ -151,11 +162,17 @@ def predict(model, df):
 4. Floor: 0.15, cap: 0.85
 
 Current calibrated thresholds (from `reports/evaluation_results.json`):
-- Realtime RF: 0.1949
-- Realtime XGBoost: 0.15
+- Realtime RF: 0.15
+- Realtime XGBoost: 0.15 (ATLAS primary)
 - Realtime LightGBM: 0.15
-- Realtime Hybrid Ensemble: 0.2517
-- Robust models: 0.30-0.39 range
+- Realtime Hybrid Ensemble: 0.238
+- Robust models: 0.35-0.42 range
+- Petrobras RF: 0.349, Petrobras XGBoost/LGB/LR: 0.15
+
+Micro-leak sensitivity (after CUSUM/divergence feature additions):
+- Realtime XGBoost: 73% (up from 38% before micro-leak features)
+- Realtime RF: 46%
+- Realtime Hybrid Ensemble: 64%
 
 ### Physics Simulator
 
@@ -173,6 +190,8 @@ Current calibrated thresholds (from `reports/evaluation_results.json`):
 1. **Historical Analysis** — Time-series, Predictions, Model comparison sub-tabs
 2. **Live Simulator** — Real-time telemetry with segment health cards, leak severity chart, model leak score chart with threshold + confirmed alert markers
 
+ATLAS model serving: `ATLAS_MODEL = "Realtime Xgboost"` (line 121). The dashboard uses the ATLAS serving layer (`src/models/atlas.py`) for live predictions with caching and fallback.
+
 All predict calls are wrapped in try/except to prevent crashes. Uses `width="stretch"` (not deprecated `use_container_width`).
 
 ### Feature Engineering
@@ -183,6 +202,11 @@ All predict calls are wrapped in try/except to prevent crashes. Uses `width="str
 - Z-scores (rolling normalization)
 - Pressure-to-flow ratio
 - Physics-informed: pressure_delta_deviation, flow_neg_streak, segment deviations
+- Micro-leak features (30-step long window):
+  - `pressure_roll30_std`, `flow_roll30_std` — long-window rolling standard deviation
+  - `pressure_cusum_neg30` — CUSUM cumulative negative pressure drop (30-step window)
+  - `pressure_flow_divergence` — normalized pressure-flow trend divergence
+  - `pressure_neg_streak15` — sustained negative pressure streak count (15-step window)
 
 `src/models/physics_wrapper.py` — `PhysicsModelWrapper._engineer_features(df)`:
 - 27 features from raw SCADA columns (P_inlet, P_mid, P_outlet, Q_inlet, Q_outlet, T_*)
