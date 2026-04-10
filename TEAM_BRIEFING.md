@@ -234,30 +234,28 @@ The dashboard explicitly treats one model as the recommended live-demo model:
 
 ATLAS = Adaptive Telemetry Leak Alert System
 
-In the codebase, ATLAS is the `Realtime Random Forest` model.
+In the codebase, ATLAS is the `Realtime Xgboost` model.
 
-It was selected because operational behavior mattered more than just raw offline accuracy.
+It was selected because operational behavior mattered more than just raw offline accuracy — particularly micro-leak sensitivity after adding CUSUM and pressure-flow divergence features.
 
 According to the current checked-in evaluation artifacts, ATLAS achieved approximately:
 
-- ROC-AUC 0.9998 on the held-out realtime test summary
-- F1 0.9935 on the held-out realtime test summary
-- 89% micro-leak sensitivity in scenario evaluation
+- 73% micro-leak sensitivity in scenario evaluation
 - 100% slow-seep detection rate in scenario evaluation
 - 0.8-step median slow-seep detection delay
-- 0.06% false-positive rate in steady-state evaluation
+- 0.00% false-positive rate in steady-state evaluation
+- 0.064 alert toggle rate (low chatter)
 
 The key idea:
 
 ATLAS was chosen because it is especially good at subtle leak detection while still keeping false alarms very low.
 
-That point is important because some other models posted excellent offline metrics but were worse at the specific operational goal of catching micro leaks.
+After adding micro-leak-focused features (CUSUM cumulative pressure drop, long-window rolling stats, pressure-flow divergence), XGBoost's gradient boosting exploits these cumulative signals far better than Random Forest:
 
-For example:
-
-- XGBoost and LightGBM are very strong on raw offline classification metrics
-- but their micro-leak sensitivity in the scenario evaluation is much lower than ATLAS
-- some robust models generalize across more sources but trigger too many false alarms for a clean live demo
+- Realtime XGBoost: 73% micro-leak sensitivity, 0% FPR
+- Realtime Random Forest: 46% micro-leak sensitivity, 0.06% FPR
+- Realtime Hybrid Ensemble: 64% micro-leak sensitivity, 0% FPR
+- Robust models still trigger too many false alarms for a clean live demo
 
 That is exactly the kind of design tradeoff investors like to hear explained clearly.
 

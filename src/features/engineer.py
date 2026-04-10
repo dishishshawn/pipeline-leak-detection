@@ -270,6 +270,49 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     roll20_f = gb["flow_rate"].rolling(20, min_periods=1).mean().reset_index(level=0, drop=True)
     df["flow_baseline_dev"] = df["flow_rate"] - roll20_f
 
+    # -- Micro-leak detection features --------------------------------------
+    # Long-window (30-step) rolling stats capture slow persistent drift that
+    # short windows miss.  Micro-leaks change pressure/flow by only ~3-5%
+    # over many steps — a 5-step window cannot accumulate enough signal.
+    roll30_p = gb["pressure"].rolling(30, min_periods=1)
+    roll30_f = gb["flow_rate"].rolling(30, min_periods=1)
+    pressure_roll30_mean = roll30_p.mean().reset_index(level=0, drop=True)
+    flow_roll30_mean = roll30_f.mean().reset_index(level=0, drop=True)
+    df["pressure_roll30_std"] = roll30_p.std().reset_index(level=0, drop=True).fillna(0.0)
+    df["flow_roll30_std"] = roll30_f.std().reset_index(level=0, drop=True).fillna(0.0)
+
+    # CUSUM-style cumulative pressure drop: sum of negative pressure deltas
+    # over a 30-step window.  A micro-leak accumulates small negatives;
+    # normal operation has symmetric noise that cancels out.
+    neg_p_delta = df["pressure_delta"].clip(upper=0.0)
+    df["pressure_cusum_neg30"] = (
+        neg_p_delta.groupby(df["segment_id"])
+        .rolling(30, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+
+    # Pressure-flow divergence: pressure drops but flow stays stable = leak.
+    # Normalised difference between pressure trend and flow trend relative
+    # to their respective long-window baselines.
+    p_dev_norm = (df["pressure"] - pressure_roll30_mean) / pressure_roll30_mean.abs().replace(0, np.nan)
+    f_dev_norm = (df["flow_rate"] - flow_roll30_mean) / flow_roll30_mean.abs().replace(0, np.nan)
+    df["pressure_flow_divergence"] = (
+        (p_dev_norm.fillna(0.0) - f_dev_norm.fillna(0.0))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
+    # Sustained negative pressure streak over 15 steps — a run of small
+    # drops is the fingerprint of a micro-leak.
+    neg_p_flag = (df["pressure_delta"] < -0.05).astype(float)
+    df["pressure_neg_streak15"] = (
+        neg_p_flag.groupby(df["segment_id"])
+        .rolling(15, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+
     logger.info("Feature engineering complete. Shape: %s", df.shape)
     return df
 
