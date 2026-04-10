@@ -34,6 +34,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Allow running from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+JOBLIB_COMPRESSION = 3
 
 try:
     import xgboost as xgb
@@ -312,10 +313,10 @@ def main() -> None:
     for name, result in final_results.items():
         log.info(f"Saving {name}...")
         model_path = output_dir / f"physics_sim_{name}.joblib"
-        joblib.dump(result["model"], model_path)
+        joblib.dump(result["model"], model_path, compress=JOBLIB_COMPRESSION)
         if result["scaler"]:
             scaler_path = output_dir / f"physics_sim_{name}_scaler.joblib"
-            joblib.dump(result["scaler"], scaler_path)
+            joblib.dump(result["scaler"], scaler_path, compress=JOBLIB_COMPRESSION)
 
     # Save summary
     summary_path = output_dir / "physics_sim_training_summary.json"

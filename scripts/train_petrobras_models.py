@@ -56,6 +56,7 @@ import joblib
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
+JOBLIB_COMPRESSION = 3
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT = ROOT / "data" / "processed" / "petrobras_3w" / "petrobras_3w_scada.csv"
@@ -580,12 +581,12 @@ def main() -> None:
 
     for name, result in final_results.items():
         model_path = output_dir / f"petrobras_{name}.joblib"
-        joblib.dump(result["model"], model_path)
+        joblib.dump(result["model"], model_path, compress=JOBLIB_COMPRESSION)
         log.info("Saved %s -> %s", name, model_path)
 
         if result["scaler"]:
             scaler_path = output_dir / f"petrobras_{name}_scaler.joblib"
-            joblib.dump(result["scaler"], scaler_path)
+            joblib.dump(result["scaler"], scaler_path, compress=JOBLIB_COMPRESSION)
             log.info("  Scaler -> %s", scaler_path)
 
         summary["models"][name] = cv_summary[name]

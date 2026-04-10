@@ -16,13 +16,26 @@ ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
 
 # ── Resolve venv Python ──────────────────────────────────────────────────────
+def _resolve_virtualenv_dir() -> Path | None:
+    candidates = [ROOT / ".venv", ROOT / "venv"]
+    for candidate in candidates:
+        if sys.platform == "win32":
+            python_path = candidate / "Scripts" / "python.exe"
+        else:
+            python_path = candidate / "bin" / "python"
+        if python_path.exists():
+            return candidate
+    return None
+
+
+_VENV_DIR = _resolve_virtualenv_dir()
 
 if sys.platform == "win32":
-    PYTHON = str(ROOT / "venv" / "Scripts" / "python.exe")
-    STREAMLIT = str(ROOT / "venv" / "Scripts" / "streamlit.exe")
+    PYTHON = str((_VENV_DIR / "Scripts" / "python.exe") if _VENV_DIR else Path(sys.executable))
+    STREAMLIT = str((_VENV_DIR / "Scripts" / "streamlit.exe") if _VENV_DIR else "")
 else:
-    PYTHON = str(ROOT / "venv" / "bin" / "python")
-    STREAMLIT = str(ROOT / "venv" / "bin" / "streamlit")
+    PYTHON = str((_VENV_DIR / "bin" / "python") if _VENV_DIR else Path(sys.executable))
+    STREAMLIT = str((_VENV_DIR / "bin" / "streamlit") if _VENV_DIR else "")
 
 
 def run(*args: str, check: bool = True) -> int:
@@ -173,7 +186,10 @@ def physics_transfer():
 
 @task("dashboard", "Launch Streamlit dashboard on port 8510")
 def dashboard():
-    run(STREAMLIT, "run", "dashboard/app.py", "--server.port", "8510")
+    if STREAMLIT and Path(STREAMLIT).exists():
+        run(STREAMLIT, "run", "dashboard/app.py", "--server.port", "8510")
+    else:
+        run(PYTHON, "-m", "streamlit", "run", "dashboard/app.py", "--server.port", "8510")
 
 
 # ── Testing ──────────────────────────────────────────────────────────────────
@@ -235,6 +251,7 @@ def clean_all():
 @task("train-all", "Train all model families (physics + realtime + robust + petrobras)")
 def train_all():
     physics_all()
+    physics_transfer()
     realtime_all()
     robust_all()
     petrobras_train()
@@ -244,6 +261,7 @@ def train_all():
 @task("retrain-all", "Regenerate all data + retrain all models + evaluate")
 def retrain_all():
     physics_all()
+    physics_transfer()
     realtime_all()
     robust_all()
     petrobras_train()
@@ -273,7 +291,7 @@ def print_help():
         "Physics":    ["physics-generate", "physics-train", "physics-validate", "physics-all"],
         "Realtime":   ["realtime-generate", "realtime-train", "realtime-all"],
         "Robust":     ["robust-corpus", "robust-train", "robust-all"],
-        "Evaluation": ["eval"],
+        "Evaluation": ["eval", "physics-transfer"],
         "Dashboard":  ["dashboard"],
         "Testing":    ["test", "test-fast"],
         "Cleanup":    ["clean", "clean-models", "clean-data", "clean-all"],
