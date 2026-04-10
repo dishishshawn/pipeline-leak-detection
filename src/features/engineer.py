@@ -328,6 +328,25 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # distinguishes a sustained drift from a one-off spike.
     df["pressure_accel"] = gb["pressure_delta"].diff().fillna(0.0)
 
+    # -- Ultra-long-window baseline (90 steps) --------------------------------
+    # A 90-step window adapts very slowly, so even after 40+ steps of a
+    # micro-leak the baseline still remembers pre-leak levels.  This keeps
+    # the deviation signal alive during extended leak hold periods where the
+    # 20-step baseline has already adapted.
+    roll90_p = gb["pressure"].rolling(90, min_periods=1).mean().reset_index(level=0, drop=True)
+    roll90_f = gb["flow_rate"].rolling(90, min_periods=1).mean().reset_index(level=0, drop=True)
+    df["pressure_baseline60_dev"] = df["pressure"] - roll90_p
+    df["flow_baseline60_dev"] = df["flow_rate"] - roll90_f
+
+    # -- Expanding cumulative stats -------------------------------------------
+    # Unlike rolling windows, expanding stats never forget the start of the
+    # run.  The deviation from the expanding mean grows monotonically during
+    # a sustained leak, providing signal that survives indefinitely.
+    exp_mean_p = gb["pressure"].expanding(min_periods=1).mean().reset_index(level=0, drop=True)
+    exp_mean_f = gb["flow_rate"].expanding(min_periods=1).mean().reset_index(level=0, drop=True)
+    df["pressure_expanding_dev"] = df["pressure"] - exp_mean_p
+    df["flow_expanding_dev"] = df["flow_rate"] - exp_mean_f
+
     # -- Cumulative flow deficit (30-step window) -----------------------------
     # Same idea as pressure CUSUM but for flow: a micro-leak drains flow
     # persistently.  Sum of negative flow deltas accumulates signal.

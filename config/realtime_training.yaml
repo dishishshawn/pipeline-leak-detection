@@ -37,6 +37,10 @@ feature_selection:
     - "pressure_accel"
     - "flow_cusum_neg30"
     - "pressure_baseline_pct"
+    - "pressure_baseline60_dev"
+    - "flow_baseline60_dev"
+    - "pressure_expanding_dev"
+    - "flow_expanding_dev"
   exclude_columns:
     - "event_type_encoded"
     - "leak_severity"
