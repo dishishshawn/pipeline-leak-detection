@@ -16,6 +16,27 @@ feature_selection:
     - "pressure_roll_std"
     - "flow_roll_mean"
     - "flow_roll_std"
+    - "pressure_pct_delta"
+    - "flow_pct_delta"
+    - "pressure_flow_ratio"
+    - "pressure_roll_z"
+    - "flow_roll_z"
+    - "pressure_delta_deviation"
+    - "flow_neg_streak"
+    - "pressure_segment_deviation"
+    - "flow_segment_deviation"
+    - "pressure_baseline_dev"
+    - "flow_baseline_dev"
+    - "pressure_roll30_std"
+    - "flow_roll30_std"
+    - "pressure_cusum_neg30"
+    - "pressure_flow_divergence"
+    - "pressure_neg_streak15"
+    - "pressure_ema_dev"
+    - "flow_ema_dev"
+    - "pressure_accel"
+    - "flow_cusum_neg30"
+    - "pressure_baseline_pct"
   exclude_columns:
     - "event_type_encoded"
     - "leak_severity"
@@ -39,12 +60,16 @@ models:
 
   xgboost:
     params:
-      n_estimators: 300
-      max_depth: 5
-      learning_rate: 0.05
-      subsample: 0.9
-      colsample_bytree: 0.9
+      n_estimators: 1200
+      max_depth: 9
+      learning_rate: 0.02
+      subsample: 0.80
+      colsample_bytree: 0.80
       reg_lambda: 1.0
+      reg_alpha: 0.05
+      min_child_weight: 2
+      gamma: 0.05
+      max_delta_step: 1
       random_state: 42
       n_jobs: 1
 

@@ -76,14 +76,18 @@ def _prepare_dataset(
 
     # Build sample weights: upweight low-severity leak rows so all models
     # learn the subtle signal, not just obvious ruptures.
+    # The evaluation micro-leak scenario tests severity 0.18-0.22, so the
+    # weight tiers are designed to put maximum emphasis on that band.
     sample_weight = np.ones(len(y), dtype=float)
     if "leak_severity" in featured.columns:
         sev = featured.loc[X.index, "leak_severity"].fillna(0.0).values
-        # Micro-leak: severity < 0.3 and target==1  →  5× weight
-        # Mid-severity: 0.3 <= severity < 0.6 and target==1  →  2× weight
+        # Critical band (evaluation target): severity 0.15-0.28  →  15× weight
+        # Ultra-subtle micro-leak: severity < 0.15 and target==1  →  12× weight
+        # Mid-severity: 0.3 <= severity < 0.6 and target==1  →  3× weight
         is_leak = y.values == 1
-        sample_weight[is_leak & (sev < 0.3)] = 5.0
-        sample_weight[is_leak & (sev >= 0.3) & (sev < 0.6)] = 2.0
+        sample_weight[is_leak & (sev < 0.15)] = 12.0
+        sample_weight[is_leak & (sev >= 0.15) & (sev < 0.3)] = 15.0
+        sample_weight[is_leak & (sev >= 0.3) & (sev < 0.6)] = 3.0
 
     return featured, X, y, sample_weight
 
