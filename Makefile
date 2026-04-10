@@ -6,9 +6,21 @@
 # On Windows without GNU Make, use:  python tasks.py <target>
 # ──────────────────────────────────────────────────────────────────────────────
 
-PYTHON   := venv/Scripts/python
-PYTEST   := venv/Scripts/pytest
-STREAMLIT := venv/Scripts/streamlit
+ifeq ($(OS),Windows_NT)
+	PYTHON := $(if $(wildcard .venv/Scripts/python.exe),.venv/Scripts/python.exe,$(if $(wildcard venv/Scripts/python.exe),venv/Scripts/python.exe,python))
+	STREAMLIT := $(if $(wildcard .venv/Scripts/streamlit.exe),.venv/Scripts/streamlit.exe,$(if $(wildcard venv/Scripts/streamlit.exe),venv/Scripts/streamlit.exe,$(PYTHON) -m streamlit))
+	CLEAN_CACHE_CMD := for /r %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
+	CLEAN_PYTEST_CACHE_CMD := if exist .pytest_cache rd /s /q .pytest_cache
+	CLEAN_PHYSICS_DATA_CMD := if exist data\physics_sim rd /s /q data\physics_sim
+	CLEAN_REALTIME_DATA_CMD := if exist data\realtime rd /s /q data\realtime
+else
+	PYTHON := $(if $(wildcard .venv/bin/python),.venv/bin/python,$(if $(wildcard venv/bin/python),venv/bin/python,python3))
+	STREAMLIT := $(if $(wildcard .venv/bin/streamlit),.venv/bin/streamlit,$(if $(wildcard venv/bin/streamlit),venv/bin/streamlit,$(PYTHON) -m streamlit))
+	CLEAN_CACHE_CMD := find . -type d -name __pycache__ -prune -exec rm -rf {} +
+	CLEAN_PYTEST_CACHE_CMD := rm -rf .pytest_cache
+	CLEAN_PHYSICS_DATA_CMD := rm -rf data/physics_sim
+	CLEAN_REALTIME_DATA_CMD := rm -rf data/realtime
+endif
 
 .DEFAULT_GOAL := help
 
@@ -17,10 +29,14 @@ STREAMLIT := venv/Scripts/streamlit
 .PHONY: help install create-venv
 
 help: ## Show this help
-	@echo.
-	@echo   Pipeline Leak Detection — Available Targets
-	@echo   ============================================
+	@echo
+	@echo "  Pipeline Leak Detection — Available Targets"
+	@echo "  ============================================"
+ifeq ($(OS),Windows_NT)
 	@findstr /R "^[a-zA-Z_-]*:.*##" Makefile
+else
+	@grep -E "^[a-zA-Z_-]+:.*##" Makefile
+endif
 
 create-venv: ## Create Python virtual environment
 	python -m venv venv
@@ -116,21 +132,21 @@ dashboard: ## Launch Streamlit dashboard
 .PHONY: test test-v test-fast
 
 test: ## Run all tests
-	$(PYTEST) tests/ -v
+	$(PYTHON) -m pytest tests/ -v
 
 test-v: ## Run tests with verbose output and stdout
-	$(PYTEST) tests/ -v -s
+	$(PYTHON) -m pytest tests/ -v -s
 
 test-fast: ## Run tests, stop on first failure
-	$(PYTEST) tests/ -x -v
+	$(PYTHON) -m pytest tests/ -x -v
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
 .PHONY: clean clean-models clean-data clean-all
 
 clean: ## Remove Python cache files
-	@for /r %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
-	@if exist .pytest_cache rd /s /q .pytest_cache
+	@$(CLEAN_CACHE_CMD)
+	@$(CLEAN_PYTEST_CACHE_CMD)
 
 clean-models: ## Remove all trained model artifacts
 	@if exist models\realtime\*.joblib del /q models\realtime\*.joblib
@@ -138,17 +154,20 @@ clean-models: ## Remove all trained model artifacts
 	@if exist models\robust\*.joblib del /q models\robust\*.joblib
 
 clean-data: ## Remove generated datasets (keeps raw downloads)
-	@if exist data\physics_sim rd /s /q data\physics_sim
-	@if exist data\realtime rd /s /q data\realtime
+	@$(CLEAN_PHYSICS_DATA_CMD)
+	@$(CLEAN_REALTIME_DATA_CMD)
 
 clean-all: clean clean-models clean-data ## Remove everything generated
 
 # ── Full Pipelines ────────────────────────────────────────────────────────────
 
-.PHONY: train-all pipeline-full
+.PHONY: train-all pipeline-full retrain-all
 
-train-all: physics-all realtime-all robust-all ## Train all model families
+train-all: physics-all physics-transfer realtime-all robust-all ## Train all model families
 	@echo All model families trained.
+
+retrain-all: physics-all physics-transfer realtime-all robust-all petrobras-train eval ## Regenerate data, retrain models, run transfer eval, and evaluate
+	@echo Full retrain complete.
 
 pipeline-full: train-all eval ## Train all models + evaluate
 	@echo Full pipeline complete.

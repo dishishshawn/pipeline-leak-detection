@@ -5,6 +5,8 @@ from pathlib import Path
 
 import joblib
 
+JOBLIB_COMPRESSION = 3
+
 
 @dataclass(frozen=True)
 class ModelArtifact:
@@ -47,7 +49,7 @@ def save_model_artifact(
         extension=extension,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, output_path)
+    joblib.dump(model, output_path, compress=JOBLIB_COMPRESSION)
     return str(output_path)
 
 

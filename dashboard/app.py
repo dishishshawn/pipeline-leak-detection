@@ -96,6 +96,7 @@ LIVE_MODEL_ALLOWLIST = {
     "Physics Sim Lightgbm",
 }
 EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
+TRANSFER_RESULTS_PATH = Path("reports/physics_to_petrobras_transfer_summary.json")
 DEFAULT_ALERT_THRESHOLD = 0.5
 
 SEGMENT_NAMES: dict[int, str] = {
@@ -261,6 +262,44 @@ def load_model_metrics() -> dict[str, dict[str, float]]:
             label = _normalize_label(stem)
             metrics[label] = {"roc_auc": round(float(roc), 3), "f1": round(float(f1), 3)}
     return metrics
+
+
+@st.cache_data(ttl=300)
+def load_transfer_results() -> dict:
+    """Load the physics-to-Petrobras transfer report when available."""
+    if not TRANSFER_RESULTS_PATH.exists():
+        return {}
+    try:
+        with open(TRANSFER_RESULTS_PATH, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def render_transfer_summary() -> None:
+    """Render a compact sim-to-real transfer summary card."""
+    transfer = load_transfer_results()
+    best = transfer.get("best_transfer_model") if transfer else None
+    if not best:
+        return
+
+    st.markdown("#### Sim-to-Real Transfer Check")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Best transfer model", str(best.get("name", "N/A")).replace("_", " ").title())
+    col2.metric(
+        "Transfer ROC-AUC",
+        f"{best['roc_auc']:.3f}" if best.get("roc_auc") is not None else "N/A",
+    )
+    col3.metric(
+        "Transfer F1",
+        f"{best['f1']:.3f}" if best.get("f1") is not None else "N/A",
+    )
+    gap = best.get("roc_auc_gap_vs_source")
+    col4.metric("AUC gap vs sim", f"{gap:+.3f}" if gap is not None else "N/A")
+    st.caption(
+        f"Physics-trained models were scored on {transfer.get('n_scenarios', 0)} Petrobras scenarios. "
+        "This section shows how well sim-trained models transfer to real oil-well telemetry."
+    )
 
 
 def format_model_option(name: str, metrics: dict[str, dict[str, float]]) -> str:
@@ -1208,6 +1247,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+render_transfer_summary()
 live_tab, historical_tab = st.tabs(["Live Simulator", "Historical Analysis"])
 
 st.markdown("---")

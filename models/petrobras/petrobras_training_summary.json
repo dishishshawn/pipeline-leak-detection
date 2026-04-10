@@ -1,16 +1,16 @@
 {
-  "generated_at_utc": "2026-03-30T15:58:49.109343+00:00",
+  "generated_at_utc": "2026-04-08T19:58:26.265550+00:00",
   "run_label": "petrobras",
-  "dataset": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\data\\processed\\petrobras_3w\\petrobras_3w_scada.csv",
+  "dataset": "/Users/daylnnguyen/Documents/PipelineData/data/processed/petrobras_3w/petrobras_3w_scada.csv",
   "dataset_type": "petrobras_3w",
-  "output_dir": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras",
-  "summary_path": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras\\petrobras_training_summary.json",
-  "metrics_csv": "C:\\Users\\TNTMi\\Desktop\\workspace\\pipeline-leak-detection\\models\\petrobras\\petrobras_model_metrics.csv",
-  "n_total": 2560071,
-  "n_train": 2037608,
-  "n_test": 522463,
-  "n_train_scenarios": 387,
-  "n_test_scenarios": 97,
+  "output_dir": "/Users/daylnnguyen/Documents/PipelineData/models/petrobras",
+  "summary_path": "/Users/daylnnguyen/Documents/PipelineData/models/petrobras/petrobras_training_summary.json",
+  "metrics_csv": "/Users/daylnnguyen/Documents/PipelineData/models/petrobras/petrobras_model_metrics.csv",
+  "n_total": 7537348,
+  "n_train": 6029878,
+  "n_test": 1507470,
+  "n_train_scenarios": 1737,
+  "n_test_scenarios": 434,
   "n_features": 27,
   "feature_names": [
     "P_inlet",
@@ -42,114 +42,86 @@
     "Q_outlet_rolling_std_5"
   ],
   "label_distribution": {
-    "0": 373860,
-    "1": 2186211
+    "0": 2012050,
+    "1": 5525298
   },
+  "evaluation_protocol": "scenario_stratified_k_fold",
+  "n_folds": 5,
   "test_split": 0.2,
   "seed": 42,
   "models": {
     "logistic_regression": {
-      "roc_auc": 0.8077,
-      "accuracy": 0.6369,
-      "precision": 0.9281,
-      "recall": 0.6179,
-      "f1": 0.7419,
-      "confusion_matrix": [
-        [
-          60156,
-          21115
-        ],
-        [
-          168581,
-          272611
-        ]
-      ]
+      "roc_auc": 0.8655,
+      "roc_auc_std": 0.0231,
+      "accuracy": 0.7824,
+      "accuracy_std": 0.0417,
+      "precision": 0.9149,
+      "precision_std": 0.0092,
+      "recall": 0.775,
+      "recall_std": 0.0563,
+      "f1": 0.8382,
+      "f1_std": 0.0361
     },
     "random_forest": {
-      "roc_auc": 0.9418,
-      "accuracy": 0.9119,
-      "precision": 0.9649,
-      "recall": 0.9295,
-      "f1": 0.9469,
-      "confusion_matrix": [
-        [
-          66347,
-          14924
-        ],
-        [
-          31108,
-          410084
-        ]
-      ]
+      "roc_auc": 0.9835,
+      "roc_auc_std": 0.0057,
+      "accuracy": 0.9281,
+      "accuracy_std": 0.0237,
+      "precision": 0.9756,
+      "precision_std": 0.0104,
+      "recall": 0.9255,
+      "recall_std": 0.0347,
+      "f1": 0.9494,
+      "f1_std": 0.0175
     },
     "xgboost": {
-      "roc_auc": 0.9386,
-      "accuracy": 0.8976,
-      "precision": 0.9389,
-      "recall": 0.9399,
-      "f1": 0.9394,
-      "confusion_matrix": [
-        [
-          54285,
-          26986
-        ],
-        [
-          26512,
-          414680
-        ]
-      ]
+      "roc_auc": 0.983,
+      "roc_auc_std": 0.0047,
+      "accuracy": 0.9097,
+      "accuracy_std": 0.0202,
+      "precision": 0.9794,
+      "precision_std": 0.0106,
+      "recall": 0.8963,
+      "recall_std": 0.0345,
+      "f1": 0.9355,
+      "f1_std": 0.0153
     },
     "lightgbm": {
-      "roc_auc": 0.9425,
-      "accuracy": 0.8819,
-      "precision": 0.9347,
-      "recall": 0.9247,
-      "f1": 0.9297,
-      "confusion_matrix": [
-        [
-          52789,
-          28482
-        ],
-        [
-          33242,
-          407950
-        ]
-      ]
+      "roc_auc": 0.984,
+      "roc_auc_std": 0.0037,
+      "accuracy": 0.9118,
+      "accuracy_std": 0.0219,
+      "precision": 0.9798,
+      "precision_std": 0.0104,
+      "recall": 0.8988,
+      "recall_std": 0.0354,
+      "f1": 0.937,
+      "f1_std": 0.0165
     },
     "isolation_forest": {
-      "roc_auc": 0.3832,
-      "accuracy": 0.1556,
+      "roc_auc": 0.4732,
+      "roc_auc_std": 0.0319,
+      "accuracy": 0.2671,
+      "accuracy_std": 0.0144,
       "precision": 0.0,
+      "precision_std": 0.0,
       "recall": 0.0,
+      "recall_std": 0.0,
       "f1": 0.0,
-      "confusion_matrix": [
-        [
-          81271,
-          0
-        ],
-        [
-          441192,
-          0
-        ]
-      ]
+      "f1_std": 0.0
     }
   },
   "best_model": {
     "name": "lightgbm",
-    "roc_auc": 0.9425,
-    "accuracy": 0.8819,
-    "precision": 0.9347,
-    "recall": 0.9247,
-    "f1": 0.9297,
-    "confusion_matrix": [
-      [
-        52789,
-        28482
-      ],
-      [
-        33242,
-        407950
-      ]
-    ]
+    "roc_auc": 0.984,
+    "roc_auc_std": 0.0037,
+    "accuracy": 0.9118,
+    "accuracy_std": 0.0219,
+    "precision": 0.9798,
+    "precision_std": 0.0104,
+    "recall": 0.8988,
+    "recall_std": 0.0354,
+    "f1": 0.937,
+    "f1_std": 0.0165
   }
 }
