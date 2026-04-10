@@ -699,7 +699,7 @@ def render_historical_tabs(
             labels={"pressure": "Pressure (bar)", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_pressure, use_container_width=True)
+        st.plotly_chart(fig_pressure)
 
         st.subheader("Flow rate over time")
         fig_flow = px.line(
@@ -709,7 +709,7 @@ def render_historical_tabs(
             labels={"flow_rate": "Flow rate", "timestamp": "Time", "segment_label": "Segment"},
             **segment_plot_args(filtered_labeled),
         )
-        st.plotly_chart(fig_flow, use_container_width=True)
+        st.plotly_chart(fig_flow)
 
         st.subheader("Leak events")
         leak_df = filtered_labeled[filtered_labeled["target"] == 1]
@@ -725,7 +725,7 @@ def render_historical_tabs(
                 title="Pressure at leak events",
                 **segment_plot_args(leak_df),
             )
-            st.plotly_chart(fig_leaks, use_container_width=True)
+            st.plotly_chart(fig_leaks)
 
     with tab_pred:
         if not models or selected_model_name not in models:
@@ -772,7 +772,7 @@ def render_historical_tabs(
                             line_color="red",
                             annotation_text="alert threshold",
                         )
-                        st.plotly_chart(fig_score, use_container_width=True)
+                        st.plotly_chart(fig_score)
                     else:
                         st.info("This model only produces class predictions, so leak scores are unavailable.")
 
@@ -873,7 +873,7 @@ def render_historical_tabs(
                             height=400,
                             legend=dict(yanchor="bottom", y=0.02, xanchor="right", x=0.98),
                         )
-                        st.plotly_chart(fig_roc, use_container_width=True, key="roc_compare")
+                        st.plotly_chart(fig_roc, key="roc_compare")
 
                     # -- Per-model details (expandable) --
                     st.subheader("Per-model details")
@@ -895,7 +895,7 @@ def render_historical_tabs(
                                     color_continuous_scale="Blues",
                                     labels={"color": "Count"},
                                 )
-                                st.plotly_chart(fig_cm, use_container_width=True, key=f"cm_{name}")
+                                st.plotly_chart(fig_cm, key=f"cm_{name}")
 
 
 def _segment_health_color(row) -> str:
@@ -1234,6 +1234,7 @@ with historical_tab:
 with live_tab:
     st.subheader("Real-time Simulator")
     if st.session_state.get("live_model_name", ATLAS_MODEL) == ATLAS_MODEL:
+        _live_delay_str = f"{_atlas_delay:.1f} steps" if _atlas_delay > 0 else "0 steps"
         st.markdown(
             '<div style="background:linear-gradient(90deg,#0d3b2e 0%,#0d1b2a 100%);'
             'border-left:4px solid #00d4aa;border-radius:6px;padding:10px 18px;margin-bottom:8px;">'
@@ -1243,8 +1244,8 @@ with live_tab:
             '&nbsp;&nbsp;<span style="color:#e0f7f2;font-size:.9rem;font-weight:600;">'
             'Adaptive Telemetry Leak Alert System</span>'
             '<br><span style="color:#9ab8d4;font-size:.8rem;">'
-            'Micro-leak sensitivity 95% &bull; '
-            'FPR 0.06% (steady-state) &bull; Detection delay 0.0 steps'
+            f'Micro-leak sensitivity {_atlas_micro:.0f}% &bull; '
+            f'FPR {_atlas_fpr:.2f}% (steady-state) &bull; Detection delay {_live_delay_str}'
             '</span></div>',
             unsafe_allow_html=True,
         )
