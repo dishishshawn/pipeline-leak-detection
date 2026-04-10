@@ -313,6 +313,43 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(level=0, drop=True)
     )
 
+    # -- EMA-based drift detector (span=20) -----------------------------------
+    # Exponential moving average responds faster to persistent drift than
+    # simple rolling mean.  The gap between EMA and the long baseline
+    # amplifies micro-leak signals while suppressing symmetric noise.
+    ema_p = gb["pressure"].transform(lambda s: s.ewm(span=20, min_periods=1).mean())
+    df["pressure_ema_dev"] = df["pressure"] - ema_p
+    ema_f = gb["flow_rate"].transform(lambda s: s.ewm(span=20, min_periods=1).mean())
+    df["flow_ema_dev"] = df["flow_rate"] - ema_f
+
+    # -- Pressure acceleration (second derivative) ----------------------------
+    # Micro-leaks produce consistently negative first derivative (delta).
+    # The second derivative being near zero while delta is negative
+    # distinguishes a sustained drift from a one-off spike.
+    df["pressure_accel"] = gb["pressure_delta"].diff().fillna(0.0)
+
+    # -- Cumulative flow deficit (30-step window) -----------------------------
+    # Same idea as pressure CUSUM but for flow: a micro-leak drains flow
+    # persistently.  Sum of negative flow deltas accumulates signal.
+    neg_f_delta = df["flow_rate_delta"].clip(upper=0.0)
+    df["flow_cusum_neg30"] = (
+        neg_f_delta.groupby(df["segment_id"])
+        .rolling(30, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+    )
+
+    # -- Pressure-to-baseline ratio -------------------------------------------
+    # A normalised version of baseline deviation: how far below baseline as
+    # a fraction of baseline.  More informative than absolute deviation for
+    # different operating points.
+    safe_baseline_p = roll20_p.replace(0, np.nan)
+    df["pressure_baseline_pct"] = (
+        ((df["pressure"] - roll20_p) / safe_baseline_p.abs())
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
     logger.info("Feature engineering complete. Shape: %s", df.shape)
     return df
 
