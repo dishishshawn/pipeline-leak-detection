@@ -83,8 +83,8 @@ MIN_MODEL_ROC_AUC = 0.55  # Hide models scoring below this
 LIVE_SCORE_LOOKBACK = 30
 LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
 LIVE_MODEL_ALLOWLIST = {
-    "Realtime Random Forest",
     "Realtime Xgboost",
+    "Realtime Random Forest",
     "Realtime Lightgbm",
     "Realtime Hybrid Ensemble",
     "Realtime Isolation Forest",
@@ -1274,8 +1274,8 @@ with live_tab:
             '&nbsp;&nbsp;<span style="color:#e0f7f2;font-size:.9rem;font-weight:600;">'
             'Adaptive Telemetry Leak Alert System</span>'
             '<br><span style="color:#9ab8d4;font-size:.8rem;">'
-            'ROC-AUC 0.9998 &bull; Micro-leak sensitivity 89% &bull; '
-            'FPR 0.06% (steady-state) &bull; Detection delay 0.8 steps'
+            'Micro-leak sensitivity 73% &bull; '
+            'FPR 0.00% (steady-state) &bull; Detection delay 0.8 steps'
             '</span></div>',
             unsafe_allow_html=True,
         )
