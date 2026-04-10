@@ -54,8 +54,8 @@ ATLAS_CODENAME = "ATLAS"
 # Default fallback ordering: if the primary is not set, try these in order.
 # The colleague will override the primary once the winning model is identified.
 DEFAULT_CANDIDATE_ORDER = [
-    "Realtime Random Forest",
     "Realtime Xgboost",
+    "Realtime Random Forest",
     "Realtime Lightgbm",
     "Realtime Hybrid Ensemble",
     "Petrobras Lightgbm",

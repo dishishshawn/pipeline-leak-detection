@@ -79,10 +79,10 @@ def _prepare_dataset(
     sample_weight = np.ones(len(y), dtype=float)
     if "leak_severity" in featured.columns:
         sev = featured.loc[X.index, "leak_severity"].fillna(0.0).values
-        # Micro-leak: severity < 0.3 and target==1  →  3× weight
+        # Micro-leak: severity < 0.3 and target==1  →  5× weight
         # Mid-severity: 0.3 <= severity < 0.6 and target==1  →  2× weight
         is_leak = y.values == 1
-        sample_weight[is_leak & (sev < 0.3)] = 3.0
+        sample_weight[is_leak & (sev < 0.3)] = 5.0
         sample_weight[is_leak & (sev >= 0.3) & (sev < 0.6)] = 2.0
 
     return featured, X, y, sample_weight

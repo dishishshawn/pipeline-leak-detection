@@ -108,18 +108,17 @@ SEGMENT_NAMES: dict[int, str] = {
 }
 
 # ATLAS: the single recommended model for live demos.
-# Selection rationale:
-#   - Highest micro-leak sensitivity: 89% recall on low-severity (< 0.3) leaks
-#   - Zero false positives on steady-state: FPR = 0.06%
+# Selection rationale (updated after micro-leak feature engineering):
+#   - Highest micro-leak sensitivity: 73% recall on low-severity (< 0.3) leaks
+#   - Zero false positives on steady-state: FPR = 0.00%
 #   - Fast time-to-detection: 0.8-step median delay on slow_seep
-#   - 100% slow-seep detection rate at calibrated threshold (0.2259)
-#   - Test set ROC-AUC: 0.9998, F1: 0.9935 (trained on 2163 samples)
+#   - 100% slow-seep detection rate at calibrated threshold (0.15)
 #   - Native predict_proba: fast probabilistic scores, no wrapper overhead
 #   - Works on both Lightweight (direct feature pipeline) and Physics (column fallback)
-#   - Clean alert stability: 0.046 toggle rate (low chatter)
+#   - Clean alert stability: 0.064 toggle rate (low chatter)
 #   - Robust models have 8-10% FPR on steady-state -- disqualified for live demo
-#   - XGBoost/LightGBM have better training F1 but 44% micro-leak sensitivity vs 89% for RF
-ATLAS_MODEL = "Realtime Random Forest"
+#   - RF has 46% micro-leak sensitivity vs 73% for XGBoost after CUSUM/divergence features
+ATLAS_MODEL = "Realtime Xgboost"
 
 
 def _load_calibrated_thresholds() -> dict[str, float]:
