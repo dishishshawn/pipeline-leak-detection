@@ -1,5 +1,5 @@
 {
-  "dataset": "data\\physics_sim\\scada_timeseries.csv",
+  "dataset": "data/physics_sim/scada_timeseries.csv",
   "n_total": 90500,
   "n_scenarios": 500,
   "leak_label_distribution": {
@@ -7,93 +7,68 @@
     "1": 31615
   },
   "n_features": 27,
-  "test_split": 0.2,
+  "n_folds": 5,
   "seed": 42,
   "models": {
     "logistic_regression": {
-      "roc_auc": 0.8652,
-      "accuracy": 0.8297,
-      "precision": 0.8724,
-      "recall": 0.6003,
-      "f1": 0.7113,
-      "confusion_matrix": [
-        [
-          11222,
-          555
-        ],
-        [
-          2527,
-          3796
-        ]
-      ]
+      "roc_auc": 0.8617,
+      "roc_auc_std": 0.0104,
+      "accuracy": 0.829,
+      "accuracy_std": 0.0146,
+      "precision": 0.8716,
+      "precision_std": 0.0247,
+      "recall": 0.5965,
+      "recall_std": 0.026,
+      "f1": 0.7081,
+      "f1_std": 0.024
     },
     "random_forest": {
-      "roc_auc": 0.9815,
-      "accuracy": 0.921,
-      "precision": 0.9254,
-      "recall": 0.8417,
-      "f1": 0.8816,
-      "confusion_matrix": [
-        [
-          11348,
-          429
-        ],
-        [
-          1001,
-          5322
-        ]
-      ]
+      "roc_auc": 0.7874,
+      "roc_auc_std": 0.0379,
+      "accuracy": 0.7871,
+      "accuracy_std": 0.024,
+      "precision": 0.8215,
+      "precision_std": 0.0614,
+      "recall": 0.4914,
+      "recall_std": 0.0803,
+      "f1": 0.6117,
+      "f1_std": 0.0755
     },
     "xgboost": {
-      "roc_auc": 0.9799,
-      "accuracy": 0.9222,
-      "precision": 0.9159,
-      "recall": 0.8558,
-      "f1": 0.8848,
-      "confusion_matrix": [
-        [
-          11280,
-          497
-        ],
-        [
-          912,
-          5411
-        ]
-      ]
+      "roc_auc": 0.8027,
+      "roc_auc_std": 0.0169,
+      "accuracy": 0.7952,
+      "accuracy_std": 0.0063,
+      "precision": 0.8133,
+      "precision_std": 0.0417,
+      "recall": 0.5321,
+      "recall_std": 0.0417,
+      "f1": 0.6423,
+      "f1_std": 0.0365
     },
     "lightgbm": {
-      "roc_auc": 0.9765,
-      "accuracy": 0.9135,
-      "precision": 0.9093,
-      "recall": 0.8358,
-      "f1": 0.871,
-      "confusion_matrix": [
-        [
-          11250,
-          527
-        ],
-        [
-          1038,
-          5285
-        ]
-      ]
+      "roc_auc": 0.8031,
+      "roc_auc_std": 0.0238,
+      "accuracy": 0.7941,
+      "accuracy_std": 0.0047,
+      "precision": 0.8041,
+      "precision_std": 0.0618,
+      "recall": 0.539,
+      "recall_std": 0.0459,
+      "f1": 0.6437,
+      "f1_std": 0.0412
     },
     "isolation_forest": {
-      "roc_auc": 0.4286,
+      "roc_auc": 0.4315,
+      "roc_auc_std": 0.0285,
       "accuracy": 0.6507,
+      "accuracy_std": 0.0334,
       "precision": 0.0,
+      "precision_std": 0.0,
       "recall": 0.0,
+      "recall_std": 0.0,
       "f1": 0.0,
-      "confusion_matrix": [
-        [
-          11777,
-          0
-        ],
-        [
-          6323,
-          0
-        ]
-      ]
+      "f1_std": 0.0
     }
   }
 }

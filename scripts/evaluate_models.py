@@ -51,6 +51,11 @@ EVAL_ALLOWLIST = {
     "Robust Lightgbm",
     "Robust Hybrid Ensemble",
     "Robust Isolation Forest",
+    "Petrobras Random Forest",
+    "Petrobras Xgboost",
+    "Petrobras Lightgbm",
+    "Petrobras Logistic Regression",
+    "Petrobras Isolation Forest",
 }
 
 

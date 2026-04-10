@@ -94,12 +94,15 @@ robust-all: robust-corpus robust-train ## Build corpus + train robust models
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
-.PHONY: eval evaluate
+.PHONY: eval evaluate physics-transfer
 
 eval: ## Evaluate all models with scenario metrics and calibrate thresholds
 	$(PYTHON) scripts/evaluate_models.py
 
 evaluate: eval ## Alias for eval
+
+physics-transfer: ## Evaluate physics-trained models on Petrobras scenarios
+	$(PYTHON) scripts/evaluate_physics_transfer.py
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 

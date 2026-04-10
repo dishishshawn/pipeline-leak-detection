@@ -43,7 +43,6 @@ from src.simulation import (
     build_manual_leak_scenarios,
     build_scenarios,
     get_manual_leak_presets,
-    get_scenario_presets,
     make_default_profiles,
 )
 
@@ -51,6 +50,16 @@ st.set_page_config(
     page_title="Pipeline Leak Detection",
     page_icon="W",
     layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+    [data-testid="collapsedControl"] { display: none; }
+    [data-testid="stSidebar"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,8 +83,8 @@ MIN_MODEL_ROC_AUC = 0.55  # Hide models scoring below this
 LIVE_SCORE_LOOKBACK = 30
 LIVE_SCORE_KEY_COLUMNS = ["segment_id", "timestamp"]
 LIVE_MODEL_ALLOWLIST = {
-    "Realtime Random Forest",
     "Realtime Xgboost",
+    "Realtime Random Forest",
     "Realtime Lightgbm",
     "Realtime Hybrid Ensemble",
     "Realtime Isolation Forest",
@@ -89,19 +98,28 @@ LIVE_MODEL_ALLOWLIST = {
 EVAL_RESULTS_PATH = Path("reports/evaluation_results.json")
 DEFAULT_ALERT_THRESHOLD = 0.5
 
+SEGMENT_NAMES: dict[int, str] = {
+    1: "Inlet Station IS-01",
+    2: "Booster Pump BP-02",
+    3: "Midline Valve VS-03",
+    4: "Compressor Station CS-04",
+    5: "Offtake Junction OJ-05",
+    6: "Terminal Station TS-06",
+}
+
 # ATLAS: the single recommended model for live demos.
-# Selection rationale:
-#   - Highest micro-leak sensitivity: 89% recall on low-severity (< 0.3) leaks
-#   - Zero false positives on steady-state: FPR = 0.06%
-#   - Fast time-to-detection: 0.8-step median delay on slow_seep
-#   - 100% slow-seep detection rate at calibrated threshold (0.2259)
-#   - Test set ROC-AUC: 0.9998, F1: 0.9935 (trained on 2163 samples)
+# Selection rationale (updated after expanding-window + EMA feature engineering):
+#   - Highest micro-leak sensitivity: 95% recall on low-severity (< 0.3) leaks
+#   - Near-zero false positives on steady-state: FPR = 0.06%
+#   - Instant time-to-detection: 0.0-step delay on slow_seep
+#   - 100% slow-seep detection rate at calibrated threshold (0.02)
 #   - Native predict_proba: fast probabilistic scores, no wrapper overhead
 #   - Works on both Lightweight (direct feature pipeline) and Physics (column fallback)
-#   - Clean alert stability: 0.046 toggle rate (low chatter)
+#   - Clean alert stability: 0.018 toggle rate (very low chatter)
+#   - Key features: expanding-window baseline (never adapts away), 90-step rolling
+#     baseline, EMA drift detector, pressure CUSUM, pressure-flow divergence
 #   - Robust models have 8-10% FPR on steady-state -- disqualified for live demo
-#   - XGBoost/LightGBM have better training F1 but 44% micro-leak sensitivity vs 89% for RF
-ATLAS_MODEL = "Realtime Random Forest"
+ATLAS_MODEL = "Realtime Xgboost"
 
 
 def _load_calibrated_thresholds() -> dict[str, float]:
@@ -200,6 +218,7 @@ def load_models(dataset_type: str = "scada") -> dict:
     }
 
 
+@st.cache_resource
 def load_live_models(dataset_type: str = "scada") -> dict:
     return {
         k: v[0]
@@ -940,8 +959,10 @@ def _prepare_live_component_data(
     # Segment health cards
     segments = []
     for _, row in latest_rows.iterrows():
+        seg_id = int(row["segment_id"])
         segments.append({
-            "id": int(row["segment_id"]),
+            "id": seg_id,
+            "name": SEGMENT_NAMES.get(seg_id, f"Segment {seg_id}"),
             "pressure": _safe(float(row["pressure"])),
             "flowRate": _safe(float(row["flow_rate"])),
             "temperature": _safe(float(row.get("temperature", 0))),
@@ -949,7 +970,7 @@ def _prepare_live_component_data(
             "pumpEfficiency": _safe(float(row.get("pump_efficiency", 1))),
             "healthColor": _segment_health_color(row),
             "healthLabel": _segment_health_label(row),
-            "modelAlert": int(row["segment_id"]) in alert_segments,
+            "modelAlert": seg_id in alert_segments,
         })
 
     # Summary metrics
@@ -969,6 +990,7 @@ def _prepare_live_component_data(
         seg = history[history["segment_id"] == seg_id].sort_values("timestamp")
         entry = {
             "segmentId": int(seg_id),
+            "segmentName": SEGMENT_NAMES.get(int(seg_id), f"Segment {seg_id}"),
             "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
             "pressure": seg["pressure"].fillna(0).round(3).tolist(),
             "flowRate": seg["flow_rate"].fillna(0).round(3).tolist(),
@@ -985,6 +1007,7 @@ def _prepare_live_component_data(
             seg = scored[scored["segment_id"] == seg_id].sort_values("timestamp")
             score_data.append({
                 "segmentId": int(seg_id),
+                "segmentName": SEGMENT_NAMES.get(int(seg_id), f"Segment {seg_id}"),
                 "timestamps": seg["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S").tolist(),
                 "leakScore": seg["leak_score"].fillna(0).round(3).tolist(),
                 "modelAlert": seg["model_alert"].tolist() if "model_alert" in seg.columns else [],
@@ -994,8 +1017,10 @@ def _prepare_live_component_data(
     marker_list = []
     if not markers.empty:
         for _, m in markers.iterrows():
+            _mid = int(m["segment_id"])
             marker_list.append({
-                "segmentId": int(m["segment_id"]),
+                "segmentId": _mid,
+                "segmentName": SEGMENT_NAMES.get(_mid, f"Segment {_mid}"),
                 "timestamp": m["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
                 "pressure": _safe(float(m["pressure"])),
                 "flowRate": _safe(float(m["flow_rate"])),
@@ -1009,8 +1034,10 @@ def _prepare_live_component_data(
             sm_df, on=["segment_id", "timestamp"], how="inner"
         )
         for _, row in sv.iterrows():
+            _smid = int(row["segment_id"])
             score_markers.append({
-                "segmentId": int(row["segment_id"]),
+                "segmentId": _smid,
+                "segmentName": SEGMENT_NAMES.get(_smid, f"Segment {_smid}"),
                 "timestamp": row["timestamp"].strftime("%Y-%m-%dT%H:%M:%S"),
                 "leakScore": _safe(float(row["leak_score"])),
             })
@@ -1099,10 +1126,15 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     markers = ideal_detection_markers(history)
     alert_threshold = get_alert_threshold(selected_live_model)
 
+    display_segs = st.session_state.get("live_display_segments") or sorted(history["segment_id"].unique().tolist())
+    display_history = history[history["segment_id"].isin(display_segs)]
+    display_scored = scored[scored["segment_id"].isin(display_segs)] if not scored.empty else scored
+    display_markers = markers[markers["segment_id"].isin(display_segs)] if not markers.empty else markers
+
     data = _prepare_live_component_data(
-        history=history,
-        scored=scored,
-        markers=markers,
+        history=display_history,
+        scored=display_scored,
+        markers=display_markers,
         running=running,
         selected_live_model=selected_live_model,
         model_exists=model is not None,
@@ -1114,23 +1146,9 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
 
 ensure_live_state()
 
-st.sidebar.title("Pipeline Leak Detection")
-st.sidebar.markdown("---")
-
-dataset_options = {
-    "SCADA Pipeline": "scada",
-    "Water Leak (labels unavailable)": "water_leak",
-}
-selected_dataset_name = st.sidebar.selectbox(
-    "Dataset Type",
-    list(dataset_options.keys()),
-    index=0,
-)
-dataset_type = dataset_options[selected_dataset_name]
-
-default_data_path = SAMPLE_DATA_PATH if dataset_type == "scada" else "data/raw/water_leak/water_leak_detection_1000_rows.csv"
-with st.sidebar.expander("Advanced"):
-    data_path = st.text_input("Data path", value=default_data_path)
+dataset_type = "scada"
+selected_dataset_name = "SCADA Pipeline"
+data_path = SAMPLE_DATA_PATH
 
 try:
     df = load_data(data_path, dataset_type)
@@ -1138,42 +1156,16 @@ except Exception as exc:
     st.error(f"Could not load data: {exc}")
     st.stop()
 
-segments = sorted(df["segment_id"].unique())
-selected_segments = st.sidebar.multiselect(
-    "Pipeline segments",
-    segments,
-    default=segments,
-    format_func=lambda s: f"Segment {s}",
-    help="Filter which pipeline segments are shown in Historical Analysis.",
-)
-
-min_ts = df["timestamp"].min()
-max_ts = df["timestamp"].max()
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(min_ts.date(), max_ts.date()),
-    min_value=min_ts.date(),
-    max_value=max_ts.date(),
-)
-
-filtered = df[df["segment_id"].isin(selected_segments)]
-if len(date_range) == 2:
-    filtered = filtered[
-        (filtered["timestamp"].dt.date >= date_range[0])
-        & (filtered["timestamp"].dt.date <= date_range[1])
-    ]
+filtered = df
 
 try:
     models = load_models(dataset_type)
-    st.sidebar.success(f"Loaded {len(models)} models for {selected_dataset_name}")
 except Exception as exc:
-    st.sidebar.warning(f"Could not load models: {exc}")
+    logger.warning("Could not load models: %s", exc)
     models = {}
 
 
 st.title("Pipeline Leak Detection Dashboard")
-
-historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
 
 # --- Hero metric banner ---
 _eval_path = Path("reports/evaluation_results.json")
@@ -1216,16 +1208,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-total = len(filtered)
-leak_count = int(filtered["target"].sum())
-leak_rate = leak_count / total * 100 if total > 0 else 0
-alarm_count = int(filtered["alarm_triggered"].sum())
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total readings", f"{total:,}")
-col2.metric("Leak events", f"{leak_count:,}", delta=f"{leak_rate:.1f}%")
-col3.metric("Alarms triggered", f"{alarm_count:,}")
-col4.metric("Segments", len(selected_segments))
+live_tab, historical_tab = st.tabs(["Live Simulator", "Historical Analysis"])
 
 st.markdown("---")
 
@@ -1252,9 +1235,8 @@ with live_tab:
             '&nbsp;&nbsp;<span style="color:#e0f7f2;font-size:.9rem;font-weight:600;">'
             'Adaptive Telemetry Leak Alert System</span>'
             '<br><span style="color:#9ab8d4;font-size:.8rem;">'
-            'ROC-AUC 0.9998 &bull; Micro-leak sensitivity 89% &bull; '
-            'FPR 0.06% (steady-state) &bull; Detection delay 0.8 steps &bull; '
-            'Works on both Lightweight and Physics backends'
+            'Micro-leak sensitivity 95% &bull; '
+            'FPR 0.06% (steady-state) &bull; Detection delay 0.0 steps'
             '</span></div>',
             unsafe_allow_html=True,
         )
@@ -1263,75 +1245,200 @@ with live_tab:
     )
 
     live_models = load_live_models(LIVE_MODEL_DATASET)
-    preset_definitions = get_scenario_presets()
-    preset_map = {preset.key: preset for preset in preset_definitions}
+    model_metrics = load_model_metrics()
+    live_models_filtered = _filter_by_score(live_models, model_metrics)
     manual_leak_presets = get_manual_leak_presets()
     manual_leak_map = {preset.label: preset for preset in manual_leak_presets}
 
-    control_col1, control_col2, control_col3 = st.columns(3)
-    with control_col1:
-        preset_label = st.selectbox(
-            "Scenario preset",
-            options=[preset.label for preset in preset_definitions],
-            index=1,
-            key="live_preset_label",
+    tick_seconds = 1
+    steps_per_refresh = 5
+    history_limit = 360
+    seed = 42
+    step_minutes = 1
+    selected_preset_key = "steady_state"
+    segment_count = len(SEGMENT_NAMES)
+
+    # Initialise session_state defaults for controls so they're readable before
+    # the fragment first runs (e.g. for the ATLAS banner above).
+    st.session_state.setdefault("live_model_name", ATLAS_MODEL)
+    st.session_state.setdefault("live_backend_label", "Lightweight (Fast)")
+
+    if hasattr(st, "fragment"):
+        @st.fragment
+        def _controls_fragment() -> None:
+            """Settings + Start/Pause/Restart — isolated so widget changes don't
+            trigger a full-page rerun."""
+            control_col1, control_col3 = st.columns(2)
+            with control_col1:
+                _default_segs = list(SEGMENT_NAMES.keys())[:3]
+                _selected_seg_names = st.multiselect(
+                    "Display segments",
+                    options=list(SEGMENT_NAMES.values()),
+                    default=[SEGMENT_NAMES[s] for s in _default_segs],
+                    key="live_display_segment_names",
+                )
+                _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+                _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
+                st.session_state["live_display_segments"] = _display_segment_ids
+
+            with control_col3:
+                model_names = list(live_models_filtered.keys()) if live_models_filtered else ["No realtime models found"]
+                _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
+                st.selectbox(
+                    "Scoring model",
+                    options=model_names,
+                    index=_atlas_index,
+                    format_func=lambda name: format_model_option(name, model_metrics),
+                    key="live_model_name",
+                )
+                st.selectbox(
+                    "Simulator backend",
+                    options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
+                    index=0,
+                    key="live_backend_label",
+                    help="Physics-Backed mode may be slower on first initialization.",
+                )
+                _backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+                if _backend_mode == "physics":
+                    st.info("Physics mode selected. First initialization may be slower.")
+
+            _backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+            _signature = simulator_signature(
+                selected_preset_key,
+                segment_count,
+                tick_seconds,
+                step_minutes,
+                history_limit,
+                int(seed),
+                steps_per_refresh,
+                _backend_mode,
+            )
+
+            button_col1, button_col2, button_col3 = st.columns(3)
+            if button_col1.button("Start / Resume", width="stretch"):
+                _sim = st.session_state.get("live_simulator")
+                if _sim is None or st.session_state.get("live_signature") != _signature:
+                    _sim = build_simulator_backend(
+                        _backend_mode,
+                        selected_preset_key,
+                        segment_count,
+                        tick_seconds,
+                        step_minutes,
+                        history_limit,
+                        int(seed),
+                    )
+                    st.session_state["live_simulator"] = _sim
+                    st.session_state["live_history"] = pd.DataFrame()
+                    st.session_state["live_signature"] = _signature
+                    st.session_state["live_backend"] = _backend_mode
+                    clear_live_score_cache()
+                _sim.start()
+                st.session_state["live_running"] = True
+                st.rerun()
+
+            if button_col2.button("Pause", width="stretch"):
+                _sim = st.session_state.get("live_simulator")
+                if _sim is not None:
+                    _sim.stop()
+                st.session_state["live_running"] = False
+                st.rerun()
+
+            if button_col3.button("Restart", width="stretch"):
+                _sim = build_simulator_backend(
+                    _backend_mode,
+                    selected_preset_key,
+                    segment_count,
+                    tick_seconds,
+                    step_minutes,
+                    history_limit,
+                    int(seed),
+                )
+                st.session_state["live_simulator"] = _sim
+                st.session_state["live_history"] = pd.DataFrame()
+                st.session_state["live_signature"] = _signature
+                st.session_state["live_backend"] = _backend_mode
+                clear_live_score_cache()
+                _sim.start()
+                st.session_state["live_running"] = True
+                st.rerun()
+
+        _controls_fragment()
+    else:
+        # Fallback for older Streamlit without fragment support
+        control_col1, control_col3 = st.columns(2)
+        with control_col1:
+            _default_segs = list(SEGMENT_NAMES.keys())[:3]
+            _selected_seg_names = st.multiselect(
+                "Display segments",
+                options=list(SEGMENT_NAMES.values()),
+                default=[SEGMENT_NAMES[s] for s in _default_segs],
+                key="live_display_segment_names",
+            )
+            _name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+            _display_segment_ids = [_name_to_id[n] for n in _selected_seg_names if n in _name_to_id] or _default_segs
+            st.session_state["live_display_segments"] = _display_segment_ids
+
+        with control_col3:
+            model_names = list(live_models_filtered.keys()) if live_models_filtered else ["No realtime models found"]
+            _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
+            st.selectbox(
+                "Scoring model",
+                options=model_names,
+                index=_atlas_index,
+                format_func=lambda name: format_model_option(name, model_metrics),
+                key="live_model_name",
+            )
+            st.selectbox(
+                "Simulator backend",
+                options=["Lightweight (Fast)", "Physics-Backed (Realistic, Slower)"],
+                index=0,
+                key="live_backend_label",
+                help="Physics-Backed mode may be slower on first initialization.",
+            )
+            backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+            if backend_mode == "physics":
+                st.info("Physics mode selected. First initialization may be slower.")
+
+        backend_mode = "physics" if "Physics" in st.session_state.get("live_backend_label", "") else "lightweight"
+        signature = simulator_signature(
+            selected_preset_key,
+            segment_count,
+            tick_seconds,
+            step_minutes,
+            history_limit,
+            int(seed),
+            steps_per_refresh,
+            backend_mode,
         )
-        segment_count = st.slider("Segments", min_value=2, max_value=6, value=3, key="live_segment_count")
-        step_minutes = st.slider("Simulated minutes per tick", min_value=1, max_value=15, value=1, key="live_step_minutes")
 
-    with control_col2:
-        tick_seconds = st.slider("Real seconds per tick", min_value=1, max_value=5, value=1, key="live_tick_seconds")
-        steps_per_refresh = st.slider("Simulation speed", min_value=1, max_value=20, value=5, help="How many simulator ticks to advance on each dashboard refresh.", key="live_steps_per_refresh")
-        history_limit = st.slider("History per segment", min_value=120, max_value=1440, value=360, step=60, key="live_history_limit")
-        seed = st.number_input("Random seed", min_value=1, max_value=999999, value=42, step=1, key="live_seed")
+        button_col1, button_col2, button_col3 = st.columns(3)
+        if button_col1.button("Start / Resume", width="stretch"):
+            simulator = st.session_state.get("live_simulator")
+            if simulator is None or st.session_state.get("live_signature") != signature:
+                simulator = build_simulator_backend(
+                    backend_mode,
+                    selected_preset_key,
+                    segment_count,
+                    tick_seconds,
+                    step_minutes,
+                    history_limit,
+                    int(seed),
+                )
+                st.session_state["live_simulator"] = simulator
+                st.session_state["live_history"] = pd.DataFrame()
+                st.session_state["live_signature"] = signature
+                st.session_state["live_backend"] = backend_mode
+                clear_live_score_cache()
+            simulator.start()
+            st.session_state["live_running"] = True
 
-    with control_col3:
-        model_metrics = load_model_metrics()
-        live_models = _filter_by_score(live_models, model_metrics)
-        model_names = list(live_models.keys()) if live_models else ["No realtime models found"]
-        _atlas_index = model_names.index(ATLAS_MODEL) if ATLAS_MODEL in model_names else 0
-        selected_live_model = st.selectbox(
-            "Scoring model",
-            options=model_names,
-            index=_atlas_index,
-            format_func=lambda name: format_model_option(name, model_metrics),
-            key="live_model_name",
-        )
-        st.caption("Live simulator scoring is limited to live-safe models from models/realtime, models/petrobras, and models/physics_sim.")
-        backend_choice = st.selectbox(
-            "Simulator backend",
-            options=["Lightweight (Fast, Demo-Safe)", "Physics-Backed (Realistic, Slower)"],
-            index=0,
-            key="live_backend_label",
-            help="Physics-Backed mode may be slower on first initialization.",
-        )
-        backend_mode = "physics" if "Physics" in backend_choice else "lightweight"
-        if backend_mode == "physics":
-            st.info("Physics mode selected. First initialization may be slower.")
-        st.markdown("**Preset description**")
-        selected_preset_key = next(
-            preset.key for preset in preset_definitions if preset.label == preset_label
-        )
-        st.write(preset_map[selected_preset_key].description)
+        if button_col2.button("Pause", width="stretch"):
+            simulator = st.session_state.get("live_simulator")
+            if simulator is not None:
+                simulator.stop()
+            st.session_state["live_running"] = False
 
-    backend_emoji = "⚡" if backend_mode == "lightweight" else "🔬"
-    st.caption(f"{backend_emoji} Active backend: **{backend_choice}**")
-
-    signature = simulator_signature(
-        selected_preset_key,
-        segment_count,
-        tick_seconds,
-        step_minutes,
-        history_limit,
-        int(seed),
-        steps_per_refresh,
-        backend_mode,
-    )
-
-    button_col1, button_col2, button_col3 = st.columns(3)
-    if button_col1.button("Start / Resume", width="stretch"):
-        simulator = st.session_state.get("live_simulator")
-        if simulator is None or st.session_state.get("live_signature") != signature:
+        if button_col3.button("Restart", width="stretch"):
             simulator = build_simulator_backend(
                 backend_mode,
                 selected_preset_key,
@@ -1346,86 +1453,114 @@ with live_tab:
             st.session_state["live_signature"] = signature
             st.session_state["live_backend"] = backend_mode
             clear_live_score_cache()
-        simulator.start()
-        st.session_state["live_running"] = True
-
-    if button_col2.button("Pause", width="stretch"):
-        simulator = st.session_state.get("live_simulator")
-        if simulator is not None:
-            simulator.stop()
-        st.session_state["live_running"] = False
-
-    if button_col3.button("Restart", width="stretch"):
-        simulator = build_simulator_backend(
-            backend_mode,
-            selected_preset_key,
-            segment_count,
-            tick_seconds,
-            step_minutes,
-            history_limit,
-            int(seed),
-        )
-        st.session_state["live_simulator"] = simulator
-        st.session_state["live_history"] = pd.DataFrame()
-        st.session_state["live_signature"] = signature
-        st.session_state["live_backend"] = backend_mode
-        clear_live_score_cache()
-        simulator.start()
-        st.session_state["live_running"] = True
+            simulator.start()
+            st.session_state["live_running"] = True
 
     st.markdown("---")
 
     st.markdown("**Manual Leak Trigger**")
-    simulator_for_trigger = st.session_state.get("live_simulator")
-    trigger_segment_options = (
-        simulator_for_trigger.segment_ids
-        if simulator_for_trigger is not None
-        else list(range(1, segment_count + 1))
-    )
-    trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
-    with trigger_col1:
-        trigger_label = st.selectbox(
-            "Leak type",
-            options=[preset.label for preset in manual_leak_presets],
-            key="manual_leak_type",
-        )
-        st.caption(manual_leak_map[trigger_label].description)
-    with trigger_col2:
-        trigger_segment = st.selectbox(
-            "Target segment",
-            options=trigger_segment_options,
-            key="manual_leak_segment",
-        )
-    with trigger_col3:
-        trigger_now = st.button("Start Leak Now", width="stretch")
 
-    if trigger_now:
-        simulator = st.session_state.get("live_simulator")
-        if simulator is None:
-            st.warning("Start the simulator before injecting a live leak event.")
-        elif isinstance(simulator, PhysicsSimulatorBackend):
-            st.info(
-                "Manual leak triggers are not supported in Physics mode — "
-                "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+    if hasattr(st, "fragment"):
+        @st.fragment
+        def _trigger_fragment() -> None:
+            sim = st.session_state.get("live_simulator")
+            raw_ids = sim.segment_ids if sim is not None else list(SEGMENT_NAMES.keys())
+            seg_name_options = [SEGMENT_NAMES.get(i, f"Segment {i}") for i in raw_ids]
+            t_col1, t_col2, t_col3 = st.columns([2, 1, 1])
+            with t_col1:
+                t_label = st.selectbox(
+                    "Leak type",
+                    options=[preset.label for preset in manual_leak_presets],
+                    key="manual_leak_type",
+                )
+                st.caption(manual_leak_map[t_label].description)
+            with t_col2:
+                t_segment_name = st.selectbox(
+                    "Target segment",
+                    options=seg_name_options,
+                    key="manual_leak_segment",
+                )
+                _seg_name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+                t_segment = _seg_name_to_id.get(t_segment_name, raw_ids[0] if raw_ids else 1)
+            with t_col3:
+                t_now = st.button("Start Leak Now", width="stretch")
+
+            if t_now:
+                simulator = st.session_state.get("live_simulator")
+                if simulator is None:
+                    st.warning("Start the simulator before injecting a live leak event.")
+                elif isinstance(simulator, PhysicsSimulatorBackend):
+                    st.info(
+                        "Manual leak triggers are not supported in Physics mode — "
+                        "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+                    )
+                else:
+                    inject_manual_leak(
+                        simulator,
+                        manual_leak_map[t_label].key,
+                        int(t_segment),
+                    )
+                    if not st.session_state.get("live_running"):
+                        simulator.start()
+                        st.session_state["live_running"] = True
+                    st.success(f"Injected {t_label} on {t_segment_name}.")
+        _trigger_fragment()
+    else:
+        simulator_for_trigger = st.session_state.get("live_simulator")
+        trigger_raw_ids = (
+            simulator_for_trigger.segment_ids
+            if simulator_for_trigger is not None
+            else list(SEGMENT_NAMES.keys())
+        )
+        trigger_seg_name_options = [SEGMENT_NAMES.get(i, f"Segment {i}") for i in trigger_raw_ids]
+        trigger_col1, trigger_col2, trigger_col3 = st.columns([2, 1, 1])
+        with trigger_col1:
+            trigger_label = st.selectbox(
+                "Leak type",
+                options=[preset.label for preset in manual_leak_presets],
+                key="manual_leak_type",
             )
-        else:
-            inject_manual_leak(
-                simulator,
-                manual_leak_map[trigger_label].key,
-                int(trigger_segment),
+            st.caption(manual_leak_map[trigger_label].description)
+        with trigger_col2:
+            trigger_segment_name = st.selectbox(
+                "Target segment",
+                options=trigger_seg_name_options,
+                key="manual_leak_segment",
             )
-            if not st.session_state.get("live_running"):
-                simulator.start()
-                st.session_state["live_running"] = True
-            st.success(f"Injected {trigger_label} on segment {trigger_segment}.")
+            _trigger_name_to_id = {v: k for k, v in SEGMENT_NAMES.items()}
+            trigger_segment = _trigger_name_to_id.get(trigger_segment_name, trigger_raw_ids[0] if trigger_raw_ids else 1)
+        with trigger_col3:
+            trigger_now = st.button("Start Leak Now", width="stretch")
+
+        if trigger_now:
+            simulator = st.session_state.get("live_simulator")
+            if simulator is None:
+                st.warning("Start the simulator before injecting a live leak event.")
+            elif isinstance(simulator, PhysicsSimulatorBackend):
+                st.info(
+                    "Manual leak triggers are not supported in Physics mode — "
+                    "leaks are embedded in the ODE run. Switch to Lightweight to inject leaks on demand."
+                )
+            else:
+                inject_manual_leak(
+                    simulator,
+                    manual_leak_map[trigger_label].key,
+                    int(trigger_segment),
+                )
+                if not st.session_state.get("live_running"):
+                    simulator.start()
+                    st.session_state["live_running"] = True
+                st.success(f"Injected {trigger_label} on {trigger_segment_name}.")
 
     if st.session_state.get("live_running") and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{int(tick_seconds)}s")
         def _live_fragment() -> None:
-            render_live_view(live_models, selected_live_model, steps_per_refresh)
+            _model_name = st.session_state.get("live_model_name", ATLAS_MODEL)
+            render_live_view(live_models_filtered, _model_name, steps_per_refresh)
         _live_fragment()
     else:
-        render_live_view(live_models, selected_live_model, steps_per_refresh)
+        _model_name = st.session_state.get("live_model_name", ATLAS_MODEL)
+        render_live_view(live_models_filtered, _model_name, steps_per_refresh)
 
     live_scored = st.session_state.get("live_scored_history", pd.DataFrame())
     if not live_scored.empty and "model_alert" in live_scored.columns:

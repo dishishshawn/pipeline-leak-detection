@@ -164,6 +164,11 @@ def evaluate():
     run(PYTHON, "scripts/evaluate_models.py")
 
 
+@task("physics-transfer", "Evaluate physics-trained models on Petrobras scenarios")
+def physics_transfer():
+    run(PYTHON, "scripts/evaluate_physics_transfer.py")
+
+
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
 @task("dashboard", "Launch Streamlit dashboard on port 8510")

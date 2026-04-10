@@ -6,7 +6,7 @@ import json
 from src.data.robust_corpus import build_robust_training_corpus
 
 DEFAULT_SIMULATOR_PATH = "data/sample/realtime_training_data.csv"
-DEFAULT_DATASETS = ["water_leak", "mendeley_water_testbed"]
+DEFAULT_DATASETS = ["petrobras_3w", "mendeley_water_testbed"]
 DEFAULT_OUTPUT = "data/processed/robust_realtime/robust_realtime_training_data.csv"
 
 
