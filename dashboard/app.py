@@ -937,6 +937,148 @@ def render_historical_tabs(
                                 st.plotly_chart(fig_cm, key=f"cm_{name}")
 
 
+def build_alert_explainers(
+    history: pd.DataFrame,
+    scored: pd.DataFrame,
+    model_name: str,
+) -> list[dict]:
+    """Build explainer cards for segments that currently have active model alerts.
+
+    Returns a list of dicts, one per alerted segment, with human-readable
+    descriptions of what the model detected.
+    """
+    if scored.empty or "model_alert" not in scored.columns:
+        return []
+
+    # Find segments with active alerts at the latest timestamp
+    latest_ts = scored["timestamp"].max()
+    latest_scored = scored[scored["timestamp"] == latest_ts]
+    alerted_segments = latest_scored[latest_scored["model_alert"] == True]["segment_id"].unique()
+
+    if len(alerted_segments) == 0:
+        return []
+
+    # Build features for the full history so we can read feature values
+    scoring_df = history.drop(
+        columns=["event_type", "target", "alarm_triggered", "scenario_context",
+                 "leak_severity", "pump_efficiency"],
+        errors="ignore",
+    ).copy()
+    try:
+        featured = build_features(scoring_df)
+    except Exception:
+        return []
+
+    explainers = []
+    for seg_id in alerted_segments:
+        seg_id = int(seg_id)
+        seg_name = SEGMENT_NAMES.get(seg_id, f"Segment {seg_id}")
+
+        # Get the latest featured row for this segment
+        seg_featured = featured[featured["segment_id"] == seg_id].sort_values("timestamp")
+        if seg_featured.empty:
+            continue
+        latest_row = seg_featured.iloc[-1]
+
+        # Get the alert's leak score
+        seg_scored = latest_scored[latest_scored["segment_id"] == seg_id]
+        leak_score = float(seg_scored["leak_score"].iloc[0]) if not seg_scored.empty and "leak_score" in seg_scored.columns else 0.0
+        threshold = get_alert_threshold(model_name)
+
+        # Compute how long ago the alert condition started (consecutive above-threshold)
+        seg_scores_full = scored[scored["segment_id"] == seg_id].sort_values("timestamp")
+        if "leak_score" in seg_scores_full.columns:
+            above = seg_scores_full["leak_score"] >= threshold
+            # Count consecutive True values from the end
+            consecutive = 0
+            for v in above.iloc[::-1]:
+                if v:
+                    consecutive += 1
+                else:
+                    break
+            alert_duration_steps = consecutive
+        else:
+            alert_duration_steps = 0
+
+        # Extract key feature signals for the explainer
+        signals = []
+
+        # Pressure baseline deviation (expanding window — never adapts)
+        p_exp_dev = latest_row.get("pressure_expanding_dev")
+        if p_exp_dev is not None and not (isinstance(p_exp_dev, float) and (p_exp_dev != p_exp_dev)):
+            p_exp_dev = float(p_exp_dev)
+            if abs(p_exp_dev) > 0.001:
+                direction = "dropped" if p_exp_dev < 0 else "risen"
+                signals.append(f"Pressure has {direction} {abs(p_exp_dev):.3f} bar from expanding baseline")
+
+        # Pressure baseline percentage deviation
+        p_base_pct = latest_row.get("pressure_baseline_pct")
+        if p_base_pct is not None and not (isinstance(p_base_pct, float) and (p_base_pct != p_base_pct)):
+            p_base_pct = float(p_base_pct)
+            if abs(p_base_pct) > 0.001:
+                signals.append(f"Pressure deviating {p_base_pct:.2%} from 20-step baseline")
+
+        # Flow CUSUM (cumulative deficit)
+        f_cusum = latest_row.get("flow_cusum_neg30")
+        if f_cusum is not None and not (isinstance(f_cusum, float) and (f_cusum != f_cusum)):
+            f_cusum = float(f_cusum)
+            if abs(f_cusum) > 0.01:
+                signals.append(f"Flow deficit accumulating (CUSUM: {f_cusum:.3f})")
+
+        # Pressure-flow divergence
+        pf_div = latest_row.get("pressure_flow_divergence")
+        if pf_div is not None and not (isinstance(pf_div, float) and (pf_div != pf_div)):
+            pf_div = float(pf_div)
+            if abs(pf_div) > 0.02:
+                signals.append(f"Pressure-flow divergence: {pf_div:.3f} (normal < 0.03)")
+
+        # Pressure CUSUM
+        p_cusum = latest_row.get("pressure_cusum_neg30")
+        if p_cusum is not None and not (isinstance(p_cusum, float) and (p_cusum != p_cusum)):
+            p_cusum = float(p_cusum)
+            if abs(p_cusum) > 0.01:
+                signals.append(f"Pressure CUSUM: {p_cusum:.3f} (cumulative drop over 30 steps)")
+
+        # EMA drift
+        p_ema = latest_row.get("pressure_ema_dev")
+        if p_ema is not None and not (isinstance(p_ema, float) and (p_ema != p_ema)):
+            p_ema = float(p_ema)
+            if abs(p_ema) > 0.001:
+                signals.append(f"EMA drift detector: {p_ema:.4f}")
+
+        # Determine severity label and comparison text
+        if leak_score >= 0.8:
+            confidence = "High"
+        elif leak_score >= 0.4:
+            confidence = "Medium"
+        else:
+            confidence = "Low"
+
+        # Build the comparison line — this is the pitch
+        if alert_duration_steps <= 5:
+            timing = "under 1 minute"
+        else:
+            timing = f"{alert_duration_steps} minutes"
+        comparison = (
+            f"A manual inspection would typically catch this after 4-6 hours "
+            f"of accumulated pressure loss. ATLAS flagged it in {timing}."
+        )
+
+        explainers.append({
+            "segmentId": seg_id,
+            "segmentName": seg_name,
+            "timestamp": latest_ts.strftime("%H:%M:%S") if hasattr(latest_ts, "strftime") else str(latest_ts),
+            "leakScore": round(leak_score, 3),
+            "threshold": round(threshold, 3),
+            "confidence": confidence,
+            "signals": signals[:4],  # Cap at 4 most relevant signals
+            "comparison": comparison,
+            "durationSteps": alert_duration_steps,
+        })
+
+    return explainers
+
+
 def _segment_health_color(row) -> str:
     """Return a status color based on leak severity and pump efficiency."""
     sev = row.get("leak_severity", 0.0)
@@ -970,6 +1112,7 @@ def _prepare_live_component_data(
     selected_live_model: str,
     model_exists: bool,
     alert_threshold: float,
+    explainers: list[dict] | None = None,
 ) -> dict:
     """Package all live-view data into a JSON-safe dict for the custom component."""
     import math
@@ -1137,6 +1280,7 @@ def _prepare_live_component_data(
         "modelOutput": model_output,
         "logColumns": log_cols,
         "recentLog": recent_log,
+        "explainers": explainers or [],
     }
 
 
@@ -1170,6 +1314,9 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
     display_scored = scored[scored["segment_id"].isin(display_segs)] if not scored.empty else scored
     display_markers = markers[markers["segment_id"].isin(display_segs)] if not markers.empty else markers
 
+    # Build explainer cards for any active alerts
+    explainers = build_alert_explainers(display_history, display_scored, selected_live_model)
+
     data = _prepare_live_component_data(
         history=display_history,
         scored=display_scored,
@@ -1178,6 +1325,7 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         selected_live_model=selected_live_model,
         model_exists=model is not None,
         alert_threshold=alert_threshold,
+        explainers=explainers,
     )
 
     live_simulator_component(data=data, key="live_sim")

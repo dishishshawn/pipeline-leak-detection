@@ -228,6 +228,107 @@ details > div {
 .health-green  { color: var(--green); }
 .health-orange { color: var(--orange); }
 .health-red    { color: var(--red); }
+
+/* ── Alert explainer cards ── */
+.explainer-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.explainer-card {
+    background: linear-gradient(135deg, #1a0a0a 0%, #2d1117 100%);
+    border-left: 5px solid var(--red);
+    border-radius: 8px;
+    padding: 18px 22px;
+}
+
+.explainer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.explainer-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--red);
+}
+
+.explainer-time {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.explainer-subtitle {
+    font-size: 13px;
+    color: #ccc;
+    margin-bottom: 14px;
+}
+
+.explainer-signals {
+    margin-bottom: 14px;
+}
+
+.explainer-signals-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.explainer-signal {
+    font-size: 13px;
+    color: #e0e0e0;
+    padding: 3px 0;
+    padding-left: 14px;
+    position: relative;
+}
+
+.explainer-signal::before {
+    content: "\25B8";
+    position: absolute;
+    left: 0;
+    color: var(--red);
+}
+
+.explainer-comparison {
+    font-size: 13px;
+    color: #b0cfeb;
+    font-style: italic;
+    padding: 10px 14px;
+    background: rgba(0, 212, 170, 0.08);
+    border-left: 3px solid #00d4aa;
+    border-radius: 4px;
+    margin-bottom: 12px;
+}
+
+.explainer-footer {
+    display: flex;
+    gap: 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.explainer-footer-item {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.explainer-footer-value {
+    font-weight: 700;
+    color: var(--text);
+}
+
+.explainer-confidence-high   { color: var(--red); }
+.explainer-confidence-medium { color: var(--orange); }
+.explainer-confidence-low    { color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -235,6 +336,7 @@ details > div {
 <div id="root">
     <div id="segment-cards" class="card-row"></div>
     <div id="metrics-row" class="metrics-row"></div>
+    <div id="explainer-container" class="explainer-container"></div>
     <div id="info-caption" class="caption" style="display:none;"></div>
 
     <div class="chart-grid">
@@ -616,6 +718,55 @@ function renderTables(data) {
 }
 
 /* ================================================================
+   Alert explainer cards
+   ================================================================ */
+function renderExplainers(data) {
+    var el = document.getElementById("explainer-container");
+    var items = data.explainers || [];
+    if (!items.length) { el.innerHTML = ""; return; }
+
+    var h = "";
+    for (var i = 0; i < items.length; i++) {
+        var ex = items[i];
+        var confClass = "explainer-confidence-" + (ex.confidence || "low").toLowerCase();
+
+        h += '<div class="explainer-card">';
+        h += '<div class="explainer-header">';
+        h += '<div class="explainer-title">\uD83D\uDD34 LEAK DETECTED \u2014 ' + esc(ex.segmentName) + '</div>';
+        h += '<div class="explainer-time">' + esc(ex.timestamp) + '</div>';
+        h += '</div>';
+
+        h += '<div class="explainer-subtitle">ATLAS flagged a sustained pressure anomaly on ' + esc(ex.segmentName) + '.</div>';
+
+        // Signals
+        var sigs = ex.signals || [];
+        if (sigs.length) {
+            h += '<div class="explainer-signals">';
+            h += '<div class="explainer-signals-label">What the model saw</div>';
+            for (var s = 0; s < sigs.length; s++) {
+                h += '<div class="explainer-signal">' + esc(sigs[s]) + '</div>';
+            }
+            h += '</div>';
+        }
+
+        // Comparison line
+        if (ex.comparison) {
+            h += '<div class="explainer-comparison">' + esc(ex.comparison) + '</div>';
+        }
+
+        // Footer metrics
+        h += '<div class="explainer-footer">';
+        h += '<div class="explainer-footer-item">Leak score: <span class="explainer-footer-value">' + fmt(ex.leakScore, 3) + '</span></div>';
+        h += '<div class="explainer-footer-item">Threshold: <span class="explainer-footer-value">' + fmt(ex.threshold, 3) + '</span></div>';
+        h += '<div class="explainer-footer-item">Confidence: <span class="explainer-footer-value ' + confClass + '">' + esc(ex.confidence) + '</span></div>';
+        h += '</div>';
+
+        h += '</div>';
+    }
+    el.innerHTML = h;
+}
+
+/* ================================================================
    Info caption
    ================================================================ */
 function renderCaption(data) {
@@ -648,6 +799,7 @@ function onRender(renderData) {
 
     renderSegmentCards(data);
     renderMetrics(data);
+    renderExplainers(data);
     renderCaption(data);
     renderAllCharts(data);
     renderTables(data);
