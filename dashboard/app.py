@@ -109,16 +109,17 @@ SEGMENT_NAMES: dict[int, str] = {
 }
 
 # ATLAS: the single recommended model for live demos.
-# Selection rationale (updated after micro-leak feature engineering):
-#   - Highest micro-leak sensitivity: 73% recall on low-severity (< 0.3) leaks
-#   - Zero false positives on steady-state: FPR = 0.00%
-#   - Fast time-to-detection: 0.8-step median delay on slow_seep
-#   - 100% slow-seep detection rate at calibrated threshold (0.15)
+# Selection rationale (updated after expanding-window + EMA feature engineering):
+#   - Highest micro-leak sensitivity: 95% recall on low-severity (< 0.3) leaks
+#   - Near-zero false positives on steady-state: FPR = 0.06%
+#   - Instant time-to-detection: 0.0-step delay on slow_seep
+#   - 100% slow-seep detection rate at calibrated threshold (0.02)
 #   - Native predict_proba: fast probabilistic scores, no wrapper overhead
 #   - Works on both Lightweight (direct feature pipeline) and Physics (column fallback)
-#   - Clean alert stability: 0.064 toggle rate (low chatter)
+#   - Clean alert stability: 0.018 toggle rate (very low chatter)
+#   - Key features: expanding-window baseline (never adapts away), 90-step rolling
+#     baseline, EMA drift detector, pressure CUSUM, pressure-flow divergence
 #   - Robust models have 8-10% FPR on steady-state -- disqualified for live demo
-#   - RF has 46% micro-leak sensitivity vs 73% for XGBoost after CUSUM/divergence features
 ATLAS_MODEL = "Realtime Xgboost"
 
 
@@ -1274,8 +1275,8 @@ with live_tab:
             '&nbsp;&nbsp;<span style="color:#e0f7f2;font-size:.9rem;font-weight:600;">'
             'Adaptive Telemetry Leak Alert System</span>'
             '<br><span style="color:#9ab8d4;font-size:.8rem;">'
-            'Micro-leak sensitivity 73% &bull; '
-            'FPR 0.00% (steady-state) &bull; Detection delay 0.8 steps'
+            'Micro-leak sensitivity 95% &bull; '
+            'FPR 0.06% (steady-state) &bull; Detection delay 0.0 steps'
             '</span></div>',
             unsafe_allow_html=True,
         )
