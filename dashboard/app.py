@@ -1333,9 +1333,23 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
 
 ensure_live_state()
 
-dataset_type = "scada"
-selected_dataset_name = "SCADA Pipeline"
-data_path = SAMPLE_DATA_PATH
+st.sidebar.title("Pipeline Leak Detection")
+st.sidebar.markdown("---")
+
+dataset_options = {
+    "SCADA Pipeline": "scada",
+    "Water Leak (labels unavailable)": "water_leak",
+}
+selected_dataset_name = st.sidebar.selectbox(
+    "Dataset Type",
+    list(dataset_options.keys()),
+    index=0,
+)
+dataset_type = dataset_options[selected_dataset_name]
+
+default_data_path = SAMPLE_DATA_PATH if dataset_type == "scada" else "data/raw/water_leak/water_leak_detection_1000_rows.csv"
+with st.sidebar.expander("Advanced"):
+    data_path = st.text_input("Data path", value=default_data_path)
 
 try:
     df = load_data(data_path, dataset_type)
@@ -1343,68 +1357,76 @@ except Exception as exc:
     st.error(f"Could not load data: {exc}")
     st.stop()
 
-filtered = df
+segments = sorted(df["segment_id"].unique())
+selected_segments = st.sidebar.multiselect(
+    "Pipeline segments",
+    segments,
+    default=segments,
+    format_func=lambda s: f"Segment {s}",
+    help="Filter which pipeline segments are shown in Historical Analysis.",
+)
+
+min_ts = df["timestamp"].min()
+max_ts = df["timestamp"].max()
+date_range = st.sidebar.date_input(
+    "Date range",
+    value=(min_ts.date(), max_ts.date()),
+    min_value=min_ts.date(),
+    max_value=max_ts.date(),
+)
+
+filtered = df[df["segment_id"].isin(selected_segments)]
+if len(date_range) == 2:
+    filtered = filtered[
+        (filtered["timestamp"].dt.date >= date_range[0])
+        & (filtered["timestamp"].dt.date <= date_range[1])
+    ]
 
 try:
     models = load_models(dataset_type)
+    st.sidebar.success(f"Loaded {len(models)} models for {selected_dataset_name}")
 except Exception as exc:
-    logger.warning("Could not load models: %s", exc)
+    st.sidebar.warning(f"Could not load models: {exc}")
     models = {}
 
 
 st.title("Pipeline Leak Detection Dashboard")
 
-# --- Hero metric banner (ATLAS model: Realtime Xgboost) ---
-_eval_path = Path("reports/evaluation_results.json")
-_atlas_micro = 95.0
-_atlas_detection = 100.0
-_atlas_delay = 0.0
-_atlas_fpr = 0.06
-if _eval_path.exists():
-    try:
-        _eval_data = json.load(_eval_path.open())
-        _model_rows = _eval_data.get("models", [])
-        _atlas_row = next((r for r in _model_rows if r["model_name"] == ATLAS_MODEL), None)
-        if _atlas_row:
-            import math as _math
-            _atlas_micro = _atlas_row.get("sensitivity_micro_leak", 0.95) * 100
-            _atlas_detection = _atlas_row.get("detection_rate_slow_seep", 1.0) * 100
-            _d = _atlas_row.get("detection_delay_slow_seep", 0.0)
-            _atlas_delay = 0.0 if (_d is None or (_math.isnan(_d) if isinstance(_d, float) else False)) else _d
-            _atlas_fpr = _atlas_row.get("fpr_steady_state", 0.0) * 100
-    except Exception:
-        pass
+_title_col, _info_col = st.columns([10, 1])
+with _info_col:
+    with st.popover(":grey_question:"):
+        # ATLAS hero metrics
+        _eval_path = Path("reports/evaluation_results.json")
+        _atlas_micro = 95.0
+        _atlas_detection = 100.0
+        _atlas_delay = 0.0
+        _atlas_fpr = 0.06
+        if _eval_path.exists():
+            try:
+                _eval_data = json.load(_eval_path.open())
+                _model_rows = _eval_data.get("models", [])
+                _atlas_row = next((r for r in _model_rows if r["model_name"] == ATLAS_MODEL), None)
+                if _atlas_row:
+                    import math as _math
+                    _atlas_micro = _atlas_row.get("sensitivity_micro_leak", 0.95) * 100
+                    _atlas_detection = _atlas_row.get("detection_rate_slow_seep", 1.0) * 100
+                    _d = _atlas_row.get("detection_delay_slow_seep", 0.0)
+                    _atlas_delay = 0.0 if (_d is None or (_math.isnan(_d) if isinstance(_d, float) else False)) else _d
+                    _atlas_fpr = _atlas_row.get("fpr_steady_state", 0.0) * 100
+            except Exception:
+                pass
+        _delay_str = f"{_atlas_delay:.1f} steps" if _atlas_delay > 0 else "0 steps"
+        st.markdown("**ATLAS Model Stats**")
+        st.markdown(
+            f"- **Micro-leak sensitivity:** {_atlas_micro:.0f}%\n"
+            f"- **Slow-seep detection:** {_atlas_detection:.0f}%\n"
+            f"- **Alert delay (slow seep):** {_delay_str}\n"
+            f"- **FPR (steady state):** {_atlas_fpr:.2f}%"
+        )
+        st.markdown("---")
+        render_transfer_summary()
 
-_delay_str = f"{_atlas_delay:.1f} steps" if _atlas_delay > 0 else "0 steps"
-_fpr_str = f"{_atlas_fpr:.2f}%"
-
-st.markdown(f"""
-<div style="background:linear-gradient(135deg,#0d1b2a 0%,#1b3a5c 100%);
-            border-left:6px solid #00d4aa;border-radius:8px;
-            padding:24px 32px;margin-bottom:16px;">
-  <div style="font-size:3.2rem;font-weight:800;color:#00d4aa;
-              letter-spacing:-1px;line-height:1;">{_atlas_micro:.0f}%</div>
-  <div style="font-size:1.1rem;color:#cde8ff;margin-top:4px;
-              font-weight:600;letter-spacing:.5px;">MICRO-LEAK SENSITIVITY (ATLAS)</div>
-  <div style="display:flex;gap:40px;margin-top:16px;">
-    <div>
-      <div style="font-size:1.4rem;font-weight:700;color:#fff;">{_atlas_detection:.0f}%</div>
-      <div style="font-size:.8rem;color:#9ab8d4;">Slow-seep detection rate</div>
-    </div>
-    <div>
-      <div style="font-size:1.4rem;font-weight:700;color:#fff;">{_delay_str}</div>
-      <div style="font-size:.8rem;color:#9ab8d4;">Alert delay (slow seep)</div>
-    </div>
-    <div>
-      <div style="font-size:1.4rem;font-weight:700;color:#fff;">{_fpr_str}</div>
-      <div style="font-size:.8rem;color:#9ab8d4;">False positive rate (steady state)</div>
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-render_transfer_summary()
-live_tab, historical_tab = st.tabs(["Live Simulator", "Historical Analysis"])
+historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
 
 st.markdown("---")
 
@@ -1420,23 +1442,17 @@ with historical_tab:
     render_historical_tabs(filtered, models, selected_model_name)
 
 with live_tab:
-    st.subheader("Real-time Simulator")
-    if st.session_state.get("live_model_name", ATLAS_MODEL) == ATLAS_MODEL:
-        _live_delay_str = f"{_atlas_delay:.1f} steps" if _atlas_delay > 0 else "0 steps"
-        st.markdown(
-            '<div style="background:linear-gradient(90deg,#0d3b2e 0%,#0d1b2a 100%);'
-            'border-left:4px solid #00d4aa;border-radius:6px;padding:10px 18px;margin-bottom:8px;">'
-            '<span style="background:#00d4aa;color:#0d1b2a;font-weight:800;'
-            'font-size:.78rem;padding:3px 10px;border-radius:4px;letter-spacing:.1em;">'
-            'ATLAS</span>'
-            '&nbsp;&nbsp;<span style="color:#e0f7f2;font-size:.9rem;font-weight:600;">'
-            'Adaptive Telemetry Leak Alert System</span>'
-            '<br><span style="color:#9ab8d4;font-size:.8rem;">'
-            f'Micro-leak sensitivity {_atlas_micro:.0f}% &bull; '
-            f'FPR {_atlas_fpr:.2f}% (steady-state) &bull; Detection delay {_live_delay_str}'
-            '</span></div>',
-            unsafe_allow_html=True,
-        )
+    _live_title_col, _live_info_col = st.columns([10, 1])
+    with _live_title_col:
+        st.subheader("Real-time Simulator")
+    with _live_info_col:
+        with st.popover(":grey_question:"):
+            st.markdown(
+                f"**ATLAS** — Adaptive Telemetry Leak Alert System\n\n"
+                f"- Micro-leak sensitivity: {_atlas_micro:.0f}%\n"
+                f"- FPR (steady-state): {_atlas_fpr:.2f}%\n"
+                f"- Detection delay: {_delay_str}"
+            )
     st.caption(
         "This simulator emits SCADA-style telemetry in real time, keeps state per segment, and applies modular incident scenarios."
     )
