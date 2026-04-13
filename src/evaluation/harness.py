@@ -29,6 +29,9 @@ from src.simulation.core import (
     make_default_profiles,
 )
 from src.simulation.scenarios import build_scenarios, get_scenario_presets
+from src.synthetic.generator import _baseline_segment_frame, _apply_leak_event, _apply_disturbance_event
+from src.synthetic.scenario_engine import EventSpec, generate_regime_schedule, REGIME_MULTIPLIERS
+from src.synthetic.realism import apply_sensor_realism
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,138 @@ def generate_evaluation_runs(
     return pd.concat(all_frames, ignore_index=True)
 
 
+def generate_synthetic_evaluation_runs(
+    scenario_keys: Sequence[str] | None = None,
+    runs_per_scenario: int = 5,
+    steps_per_run: int = 240,
+    segment_count: int = 3,
+    base_seed: int = 9999,
+) -> pd.DataFrame:
+    """Generate eval runs using the new synthetic generator distribution.
+
+    Each run is a short history (steps_per_run steps at 1-min cadence) with
+    deterministic event placement per scenario type.  This ensures training
+    and evaluation share the same signal distribution.
+    """
+    if scenario_keys is None:
+        scenario_keys = list(DEFAULT_SCENARIOS)
+
+    profiles = make_default_profiles(segment_count)
+    segment_ids = [p.segment_id for p in profiles]
+    mid_segment = segment_ids[len(segment_ids) // 2]
+    all_frames: list[pd.DataFrame] = []
+    step_minutes = 1
+
+    for scenario_key in scenario_keys:
+        for run_idx in range(runs_per_scenario):
+            seed = base_seed + hash(scenario_key) % 10_000 + run_idx
+            rng = np.random.default_rng(seed)
+            history_id = f"{scenario_key}_run_{run_idx}"
+
+            # Steady-state uses nominal-only regime; others get realistic mix
+            if scenario_key == "steady_state":
+                regime_schedule = np.full(steps_per_run, "nominal", dtype=object)
+            else:
+                regime_schedule = generate_regime_schedule(
+                    steps_per_run, step_minutes=step_minutes, rng=np.random.default_rng(seed + 1)
+                )
+
+            timestamps = pd.date_range("2026-06-01", periods=steps_per_run, freq=f"{step_minutes}min")
+            history_frames = []
+            for profile in profiles:
+                seg_rng = np.random.default_rng(int(rng.integers(0, 1_000_000)) + profile.segment_id)
+                frame = _baseline_segment_frame(
+                    timestamps=timestamps,
+                    history_id=history_id,
+                    segment_id=profile.segment_id,
+                    base_pressure=profile.base_pressure,
+                    base_flow=profile.base_flow_rate,
+                    base_temperature=profile.base_temperature,
+                    base_pump_speed=profile.base_pump_speed,
+                    regime_schedule=regime_schedule,
+                    rng=seg_rng,
+                )
+                history_frames.append(frame)
+
+            run_df = pd.concat(history_frames, ignore_index=True)
+            run_df["step_index"] = run_df.groupby("segment_id").cumcount()
+
+            # Build deterministic events per scenario
+            events: list[EventSpec] = []
+            onset_step = steps_per_run // 4  # leak starts at 25% of run
+
+            if scenario_key == "slow_seep":
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_leak",
+                    event_type="slow_leak", start_step=onset_step,
+                    duration_steps=steps_per_run // 2,
+                    segment_ids=(mid_segment,), intensity=0.50,
+                    metadata={"kind": "leak"},
+                ))
+            elif scenario_key == "demand_shock":
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_spike",
+                    event_type="demand_spike", start_step=onset_step,
+                    duration_steps=steps_per_run // 5,
+                    segment_ids=tuple(segment_ids), intensity=0.70,
+                    metadata={"kind": "disturbance"},
+                ))
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_pump",
+                    event_type="pump_wear", start_step=onset_step + steps_per_run // 5,
+                    duration_steps=steps_per_run // 4,
+                    segment_ids=(segment_ids[-1],), intensity=0.55,
+                    metadata={"kind": "disturbance"},
+                ))
+            elif scenario_key == "compound_incident":
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_spike",
+                    event_type="demand_spike", start_step=onset_step,
+                    duration_steps=steps_per_run // 6,
+                    segment_ids=tuple(segment_ids), intensity=0.60,
+                    metadata={"kind": "disturbance"},
+                ))
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_leak",
+                    event_type="slow_leak", start_step=onset_step + steps_per_run // 5,
+                    duration_steps=steps_per_run // 3,
+                    segment_ids=(mid_segment,), intensity=0.55,
+                    metadata={"kind": "leak"},
+                ))
+            elif scenario_key == "micro_leak":
+                events.append(EventSpec(
+                    history_id=history_id, event_id=f"{history_id}_micro",
+                    event_type="micro_leak", start_step=onset_step,
+                    duration_steps=steps_per_run // 2,
+                    segment_ids=(mid_segment,), intensity=0.20,
+                    metadata={"kind": "leak"},
+                ))
+            # steady_state: no events
+
+            for event in events:
+                if event.metadata.get("kind") == "leak":
+                    _apply_leak_event(run_df, event, step_minutes=step_minutes, seed=seed + event.start_step)
+                else:
+                    _apply_disturbance_event(run_df, event)
+
+            run_df = apply_sensor_realism(
+                run_df.drop(columns=["step_index"]),
+                step_minutes=step_minutes,
+                rng=np.random.default_rng(seed + 7777),
+            )
+            for col in ("pressure", "flow_rate", "temperature", "pump_speed", "energy_consumption", "leak_severity", "pump_efficiency"):
+                if col in run_df.columns:
+                    run_df[col] = run_df[col].astype(float)
+
+            run_df["run_id"] = history_id
+            run_df["scenario_key"] = scenario_key
+            all_frames.append(run_df)
+
+    if not all_frames:
+        return pd.DataFrame()
+    return pd.concat(all_frames, ignore_index=True)
+
+
 # ---------------------------------------------------------------------------
 # Per-run feature engineering
 # ---------------------------------------------------------------------------
@@ -114,6 +249,8 @@ def score_all_models(
         "timestamp", "run_id", "scenario_key", "event_type", "target",
         "scenario_context", "leak_severity", "pump_efficiency",
         "alarm_triggered",
+        # New synthetic generator columns
+        "history_id", "scenario_id", "operating_regime", "active_event_id",
     }
     feature_cols = [c for c in df.columns if c not in meta_cols]
 
@@ -342,18 +479,32 @@ def run_evaluation(
     steps_per_run: int = 120,
     target_fpr: float = 0.05,
     base_seed: int = 9999,
+    generator: str = "synthetic",
 ) -> tuple[EvaluationReport, pd.DataFrame]:
     """End-to-end evaluation: generate data, score, calibrate, compute metrics.
 
+    Args:
+        generator: ``"synthetic"`` (default) uses the new long-horizon
+            generator so training/eval distributions match.
+            ``"legacy"`` uses the old ``PipelineTelemetrySimulator``.
+
     Returns (report, detailed_scores_df).
     """
-    logger.info("Generating evaluation runs...")
-    raw_df = generate_evaluation_runs(
-        scenario_keys=scenario_keys,
-        runs_per_scenario=runs_per_scenario,
-        steps_per_run=steps_per_run,
-        base_seed=base_seed,
-    )
+    logger.info("Generating evaluation runs (generator=%s)...", generator)
+    if generator == "legacy":
+        raw_df = generate_evaluation_runs(
+            scenario_keys=scenario_keys,
+            runs_per_scenario=runs_per_scenario,
+            steps_per_run=steps_per_run,
+            base_seed=base_seed,
+        )
+    else:
+        raw_df = generate_synthetic_evaluation_runs(
+            scenario_keys=scenario_keys,
+            runs_per_scenario=runs_per_scenario,
+            steps_per_run=max(steps_per_run, 240),
+            base_seed=base_seed,
+        )
     logger.info("Generated %d rows across %d runs", len(raw_df), raw_df["run_id"].nunique())
 
     logger.info("Engineering features per run...")

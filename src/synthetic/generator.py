@@ -141,12 +141,15 @@ def _apply_leak_event(
     segment_rows["flow_rate"] += sig["flow_effect"].to_numpy() * flow_scale * 0.22
     segment_rows["temperature"] += sig["temperature_effect"].to_numpy() * 6.0
     severity = sig["severity"].to_numpy()
-    if event.event_type == "borderline_leak":
+    if event.event_type == "micro_leak":
+        severity *= 0.70
+    elif event.event_type == "borderline_leak":
         severity *= 0.82
-    if event.event_type == "slow_leak":
+    elif event.event_type == "slow_leak":
         severity *= 0.94
     segment_rows["leak_severity"] = np.maximum(segment_rows["leak_severity"], severity)
-    segment_rows["target"] = np.where(segment_rows["leak_severity"] >= (0.10 if event.event_type == "borderline_leak" else 0.12), 1, segment_rows["target"])
+    target_threshold = 0.03 if event.event_type == "micro_leak" else (0.10 if event.event_type == "borderline_leak" else 0.12)
+    segment_rows["target"] = np.where(segment_rows["leak_severity"] >= target_threshold, 1, segment_rows["target"])
     segment_rows["event_type"] = np.where(
         segment_rows["leak_severity"] >= 0.45,
         "fault",

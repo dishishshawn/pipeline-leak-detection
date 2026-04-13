@@ -111,6 +111,7 @@ def build_event_plan(
         "slow_leak": max(1, int(round(horizon_days * 0.45))),
         "borderline_leak": max(1, int(round(horizon_days * 0.35))),
         "abrupt_leak": max(1, int(round(horizon_days * 0.20))),
+        "micro_leak": max(2, int(round(horizon_days * 0.55))),
     }
     nuisance_counts = {
         "demand_spike": max(2, int(round(horizon_days * 1.4))),
@@ -128,6 +129,9 @@ def build_event_plan(
             elif event_type == "borderline_leak":
                 duration = _bounded_duration(n_steps, step_minutes, 10, 40, rng)
                 intensity = float(rng.uniform(0.10, 0.24))
+            elif event_type == "micro_leak":
+                duration = _bounded_duration(n_steps, step_minutes, 15, 60, rng)
+                intensity = float(rng.uniform(0.01, 0.08))
             else:
                 duration = _bounded_duration(n_steps, step_minutes, 0.8, 6, rng)
                 intensity = float(rng.uniform(0.70, 1.0))
