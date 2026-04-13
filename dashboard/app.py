@@ -1446,7 +1446,7 @@ with _info_col:
         st.markdown("---")
         render_transfer_summary()
 
-historical_tab, live_tab = st.tabs(["Historical Analysis", "Live Simulator"])
+live_tab, historical_tab = st.tabs(["Live Simulator", "Historical Analysis"])
 
 st.markdown("---")
 
