@@ -1,162 +1,61 @@
-"""Generate training data from the simulator for realtime models.
+"""Generate long-horizon synthetic SCADA training data for realtime models.
 
-Runs multiple scenarios to produce a balanced dataset that matches
-the actual value distributions the live view will see.
+This replaces the old pile-of-short-episodes approach with a hybrid generator:
+- stochastic operational histories spanning days or weeks
+- leak events shaped by physics-derived priors
+- nuisance disturbances and sensor realism layered onto the histories
 """
 from __future__ import annotations
 
+import argparse
 import logging
 from pathlib import Path
+import sys
 
-import pandas as pd
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.simulation import (
-    PipelineTelemetrySimulator,
-    SimulationConfig,
-    build_scenarios,
-    make_default_profiles,
-)
-from src.simulation.scenarios import LeakProgressionScenario, PumpWearScenario
+from src.synthetic.generator import SyntheticHistoryConfig, save_synthetic_histories
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path("data/sample")
-OUTPUT_FILE = OUTPUT_DIR / "realtime_training_data.csv"
 
-PROFILES = make_default_profiles(3)
-SEGMENT_IDS = [p.segment_id for p in PROFILES]
-STEPS_PER_RUN = 120  # 2 hours of simulated data per scenario
-
-
-def _run_scenario(preset_key: str, seed: int) -> pd.DataFrame:
-    """Run a scenario and return the full history."""
-    scenarios = build_scenarios(preset_key, SEGMENT_IDS)
-    config = SimulationConfig(segment_profiles=PROFILES, seed=seed)
-    sim = PipelineTelemetrySimulator(config, scenarios)
-    sim.start()
-    df = sim.advance_steps(STEPS_PER_RUN)
-    return df
-
-
-def _run_custom_leak(start_step: int, segment_id: int, seed: int,
-                     ramp: int = 10, hold: int = 20, recovery: int = 8,
-                     max_severity: float = 1.0) -> pd.DataFrame:
-    """Run a custom leak scenario for variety."""
-    scenarios = [
-        LeakProgressionScenario(
-            start_step=start_step, ramp_steps=ramp, hold_steps=hold,
-            recovery_steps=recovery, max_severity=max_severity,
-            affected_segments=[segment_id],
-        )
-    ]
-    config = SimulationConfig(segment_profiles=PROFILES, seed=seed)
-    sim = PipelineTelemetrySimulator(config, scenarios)
-    sim.start()
-    return sim.advance_steps(STEPS_PER_RUN)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate synthetic realtime training data")
+    parser.add_argument("--histories", type=int, default=8, help="Number of long histories to generate")
+    parser.add_argument("--days-per-history", type=int, default=7, help="Length of each history in days")
+    parser.add_argument("--segment-count", type=int, default=3, help="Number of pipeline segments")
+    parser.add_argument("--step-minutes", type=int, default=1, help="Sampling cadence in minutes")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="data/sample/realtime_training_data.csv",
+        help="Synthetic dataset CSV path",
+    )
+    parser.add_argument(
+        "--metadata-output",
+        type=str,
+        default="data/sample/realtime_training_metadata.csv",
+        help="Event metadata CSV path",
+    )
+    return parser.parse_args()
 
 
-def main():
-    frames = []
-
-    # Normal operation (multiple seeds for variety)
-    for i, seed in enumerate([42, 99, 137, 200]):
-        logger.info("Generating steady_state run %d (seed=%d)", i + 1, seed)
-        frames.append(_run_scenario("steady_state", seed))
-
-    # Leak scenarios
-    for i, seed in enumerate([10, 55, 88]):
-        logger.info("Generating slow_seep run %d (seed=%d)", i + 1, seed)
-        frames.append(_run_scenario("slow_seep", seed))
-
-    # Demand shock (non-leak stress — models must learn to NOT flag this)
-    for i, seed in enumerate([33, 77]):
-        logger.info("Generating demand_shock run %d (seed=%d)", i + 1, seed)
-        frames.append(_run_scenario("demand_shock", seed))
-
-    # Compound incident
-    logger.info("Generating compound_incident")
-    frames.append(_run_scenario("compound_incident", seed=42))
-
-    # Custom leaks at different times/segments for diversity
-    for seg_id in SEGMENT_IDS:
-        for start in [5, 25, 50]:
-            logger.info("Generating custom leak seg=%d start=%d", seg_id, start)
-            frames.append(_run_custom_leak(start, seg_id, seed=seg_id * 100 + start))
-
-    # Micro leaks — varied severity (0.05-0.28) so the model sees the full
-    # range of subtle signal, not just max-severity snapshots.
-    # Extra runs at the hardest severities (0.08-0.18) which are closest to
-    # the detection boundary — these are the rows that drive micro-leak
-    # sensitivity.
-    _micro_configs = [
-        # (start, max_severity, ramp, hold, recovery)
-        (12, 0.28, 18, 32, 14),
-        (36, 0.22, 22, 28, 12),
-        (72, 0.18, 25, 35, 10),
-        (20, 0.14, 30, 40, 16),
-        (50, 0.10, 35, 45, 14),
-        (8,  0.25, 20, 30, 12),
-        # Extra hard-boundary runs: more examples at 0.08-0.18 severity
-        (15, 0.08, 40, 50, 12),
-        (30, 0.12, 35, 45, 14),
-        (55, 0.15, 30, 40, 10),
-        (10, 0.18, 28, 38, 12),
-        (40, 0.10, 38, 48, 16),
-        (65, 0.13, 32, 42, 14),
-        # Longer hold durations at medium-low severity for more training signal
-        (5,  0.20, 20, 60, 10),
-        (25, 0.16, 25, 55, 12),
-        (45, 0.11, 35, 50, 14),
-        (60, 0.09, 40, 50, 10),
-        # Targeted at the evaluation micro-leak band: severity 0.18-0.28 with
-        # long ramps and holds to maximise the number of target=1 rows the model
-        # trains on.  The evaluation preset uses max_severity=0.22, ramp=25,
-        # hold=40 — these mirror that shape at varied offsets/seeds.
-        (10, 0.22, 25, 45, 14),
-        (20, 0.22, 28, 50, 12),
-        (35, 0.22, 22, 48, 10),
-        (50, 0.22, 30, 42, 14),
-        (8,  0.24, 22, 44, 12),
-        (28, 0.24, 26, 46, 10),
-        (42, 0.20, 28, 52, 14),
-        (58, 0.20, 24, 48, 12),
-        (14, 0.19, 30, 50, 10),
-        (32, 0.21, 26, 44, 14),
-        (48, 0.23, 24, 46, 12),
-        (62, 0.26, 20, 40, 10),
-    ]
-    for seg_id in SEGMENT_IDS:
-        for start, sev, ramp, hold, rec in _micro_configs:
-            logger.info("Generating micro leak seg=%d start=%d severity=%.2f", seg_id, start, sev)
-            frames.append(_run_custom_leak(
-                start, seg_id,
-                seed=seg_id * 300 + start + int(sev * 1000),
-                ramp=ramp, hold=hold, recovery=rec,
-                max_severity=sev,
-            ))
-
-    # Fast ruptures
-    for seg_id in SEGMENT_IDS:
-        logger.info("Generating rupture seg=%d", seg_id)
-        frames.append(_run_custom_leak(
-            10, seg_id, seed=seg_id * 200,
-            ramp=4, hold=14, recovery=8, max_severity=1.35,
-        ))
-
-    df = pd.concat(frames, ignore_index=True)
-
-    # Keep leak_severity in the CSV — training uses it for sample weights.
-    # pump_efficiency is not needed after training.
-    df = df.drop(columns=["pump_efficiency"], errors="ignore")
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUTPUT_FILE, index=False)
-
-    n_pos = int(df["target"].sum())
-    n_neg = len(df) - n_pos
-    logger.info("Saved %d rows to %s (positive=%d, negative=%d, ratio=%.1f%%)",
-                len(df), OUTPUT_FILE, n_pos, n_neg, 100 * n_pos / len(df))
+def main() -> None:
+    args = parse_args()
+    config = SyntheticHistoryConfig(
+        n_histories=args.histories,
+        days_per_history=args.days_per_history,
+        segment_count=args.segment_count,
+        step_minutes=args.step_minutes,
+        seed=args.seed,
+        output_path=args.output,
+        metadata_path=args.metadata_output,
+    )
+    output_path, metadata_path = save_synthetic_histories(config)
+    logger.info("Saved synthetic training data to %s", Path(output_path))
+    logger.info("Saved event metadata to %s", Path(metadata_path))
 
 
 if __name__ == "__main__":

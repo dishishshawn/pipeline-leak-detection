@@ -1,0 +1,21 @@
+{
+  "rows": 241920,
+  "segment_count": 3,
+  "history_count": 8,
+  "median_history_hours": 167.98333333333332,
+  "max_history_hours": 167.98333333333332,
+  "leak_row_rate": 0.17998098544973545,
+  "slow_leak_event_count": 14,
+  "abrupt_leak_event_count": 20,
+  "borderline_leak_event_count": 8,
+  "disturbance_row_rate": 0.6425801917989418,
+  "missing_value_rate": 0.01588252314814815,
+  "stale_sensor_rate": 0.044792700066137565,
+  "raw_sensor_auc": 0.6902919143327231,
+  "dynamics_auc": 0.6968181322892293,
+  "disturbance_false_positive_rate": 0.04597399915818899,
+  "leak_disturbance_overlap": 0.986798679867994,
+  "warnings": [
+    "Dynamic features add little over raw sensors; event context may be too clean."
+  ]
+}
