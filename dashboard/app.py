@@ -191,12 +191,38 @@ def load_data(path: str, dataset_type: str = "scada") -> pd.DataFrame:
 
 
 @st.cache_resource
-def _load_all_models(dataset_type: str) -> dict:
-    """Load every artifact for the given dataset type. Results are cached once per dataset."""
+def _load_live_models_only(dataset_type: str) -> dict:
+    """Load only LIVE_MODEL_ALLOWLIST models — fast path for dashboard startup."""
     loaded_models = {}
     skipped_artifacts = []
 
     for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
+        if label not in LIVE_MODEL_ALLOWLIST:
+            continue
+        try:
+            loaded_models[label] = (load_model(artifact.path), artifact.path)
+        except (ImportError, ModuleNotFoundError) as exc:
+            skipped_artifacts.append(f"{label} ({Path(artifact.path).name}): {exc}")
+
+    if skipped_artifacts:
+        logger.warning(
+            "Skipped live model artifacts: %s",
+            "; ".join(skipped_artifacts),
+        )
+
+    return loaded_models
+
+
+@st.cache_resource
+def _load_all_models(dataset_type: str) -> dict:
+    """Load every artifact for the given dataset type. Results are cached once per dataset."""
+    # Start from the already-cached live models to avoid double-loading them.
+    loaded_models = dict(_load_live_models_only(dataset_type))
+    skipped_artifacts = []
+
+    for label, artifact in discover_model_artifacts(MODEL_DIR, dataset_type).items():
+        if label in loaded_models:
+            continue
         try:
             loaded_models[label] = (load_model(artifact.path), artifact.path)
         except (ImportError, ModuleNotFoundError) as exc:
@@ -223,8 +249,7 @@ def load_models(dataset_type: str = "scada") -> dict:
 def load_live_models(dataset_type: str = "scada") -> dict:
     return {
         k: v[0]
-        for k, v in _load_all_models(dataset_type).items()
-        if k in LIVE_MODEL_ALLOWLIST
+        for k, v in _load_live_models_only(dataset_type).items()
     }
 
 
@@ -894,25 +919,33 @@ def render_historical_tabs(
                         width="stretch",
                     )
 
-                    # -- Overlaid ROC curves --
+                    # -- ROC-AUC bar chart --
                     if _roc_curves:
-                        st.subheader("ROC curves")
-                        fig_roc = go.Figure()
-                        for roc_name, (fpr, tpr, auc_val) in _roc_curves.items():
-                            fig_roc.add_trace(
-                                go.Scatter(x=fpr, y=tpr, name=f"{roc_name} ({auc_val:.3f})")
+                        st.subheader("ROC-AUC comparison")
+                        auc_data = sorted(
+                            [(n, auc) for n, (_f, _t, auc) in _roc_curves.items()],
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )
+                        bar_names = [d[0] for d in auc_data]
+                        bar_aucs = [d[1] for d in auc_data]
+                        fig_bar = go.Figure(
+                            go.Bar(
+                                x=bar_aucs,
+                                y=bar_names,
+                                orientation="h",
+                                text=[f"{a:.3f}" for a in bar_aucs],
+                                textposition="outside",
                             )
-                        fig_roc.add_shape(
-                            type="line", x0=0, y0=0, x1=1, y1=1,
-                            line=dict(dash="dash", color="gray"),
                         )
-                        fig_roc.update_layout(
-                            xaxis_title="False Positive Rate",
-                            yaxis_title="True Positive Rate",
-                            height=400,
-                            legend=dict(yanchor="bottom", y=0.02, xanchor="right", x=0.98),
+                        fig_bar.update_layout(
+                            xaxis_title="ROC-AUC",
+                            xaxis=dict(range=[0, 1.05]),
+                            yaxis=dict(autorange="reversed"),
+                            height=max(300, len(bar_names) * 28 + 80),
+                            margin=dict(l=10, r=60),
                         )
-                        st.plotly_chart(fig_roc, key="roc_compare")
+                        st.plotly_chart(fig_bar, key="roc_compare")
 
                     # -- Per-model details (expandable) --
                     st.subheader("Per-model details")
@@ -1371,6 +1404,7 @@ default_data_path = SAMPLE_DATA_PATH if dataset_type == "scada" else "data/raw/w
 with st.sidebar.expander("Advanced"):
     data_path = st.text_input("Data path", value=default_data_path)
 
+
 try:
     df = load_data(data_path, dataset_type)
 except Exception as exc:
@@ -1452,14 +1486,14 @@ st.markdown("---")
 
 with historical_tab:
     _hist_metrics = load_model_metrics()
-    models = _filter_by_score(models, _hist_metrics)
+    _hist_models = _filter_by_score(models, _hist_metrics)
     selected_model_name = st.selectbox(
         "Model",
-        list(models.keys()) if models else ["No models found"],
+        list(_hist_models.keys()) if _hist_models else ["No models found"],
         format_func=lambda name: format_model_option(name, _hist_metrics),
         help="Select the model used for predictions and scoring in the tabs below.",
     )
-    render_historical_tabs(filtered, models, selected_model_name)
+    render_historical_tabs(filtered, _hist_models, selected_model_name)
 
 with live_tab:
     _live_title_col, _live_info_col = st.columns([10, 1])
@@ -1493,7 +1527,6 @@ with live_tab:
 
     # Initialise session_state defaults for controls so they're readable before
     # the fragment first runs (e.g. for the ATLAS banner above).
-    st.session_state.setdefault("live_model_name", ATLAS_MODEL)
     st.session_state.setdefault("live_backend_label", "Lightweight (Fast)")
 
     if hasattr(st, "fragment"):
