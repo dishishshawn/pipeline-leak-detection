@@ -10,6 +10,9 @@ _FRONTEND_DIR = Path(__file__).parent / "frontend"
 _component_func = components.declare_component("live_simulator", path=str(_FRONTEND_DIR))
 
 
-def live_simulator_component(data: dict, key: str = "live_sim") -> None:
-    """Render the live simulator view using the custom JS component."""
-    _component_func(data=data, key=key, default=None)
+def live_simulator_component(data: dict, key: str = "live_sim"):
+    """Render the live simulator view using the custom JS component.
+
+    Returns the latest value posted from the frontend (or None).
+    """
+    return _component_func(data=data, key=key, default=None)

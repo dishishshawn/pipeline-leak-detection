@@ -183,6 +183,7 @@ def main():
     parser.add_argument("--target-fpr", type=float, default=0.05)
     parser.add_argument("--base-seed", type=int, default=9999)
     parser.add_argument("--output-dir", type=str, default=str(MODEL_DIR.parent / "reports"))
+    parser.add_argument("--generator", choices=["synthetic", "legacy"], default="legacy")
     args = parser.parse_args()
 
     # Load models
@@ -199,6 +200,7 @@ def main():
         steps_per_run=args.steps_per_run,
         target_fpr=args.target_fpr,
         base_seed=args.base_seed,
+        generator=args.generator,
     )
 
     # Print results

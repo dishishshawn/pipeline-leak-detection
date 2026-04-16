@@ -17,6 +17,7 @@ class AlertPolicyConfig:
     threshold: float = 0.5
     persistence_ticks: int = 3
     cooldown_ticks: int = 10
+    rearm_ticks: int = 10
     confirmation_k: int = 3
     confirmation_window: int = 5
     mode: str = "persistence"  # "persistence" | "confirmation"
@@ -32,6 +33,8 @@ class AlertPolicy:
     def reset(self) -> None:
         self._consecutive_above = 0
         self._cooldown_remaining = 0
+        self._needs_rearm = False
+        self._below_since_fire = 0
         self._recent: deque[bool] = deque(maxlen=self.config.confirmation_window)
 
     def update(self, score: float) -> bool:
@@ -42,10 +45,22 @@ class AlertPolicy:
         # Cooldown: suppress alerts for N ticks after last alert
         if self._cooldown_remaining > 0:
             self._cooldown_remaining -= 1
+            return False
+
+        # After firing, require the score to actually drop below threshold
+        # for `rearm_ticks` consecutive ticks before another alert can fire.
+        # Prevents long-window features (CUSUM, expanding_dev) from keeping
+        # the score elevated and causing a phantom re-alert after the leak
+        # has already cleared.
+        if self._needs_rearm:
             if not above:
-                self._consecutive_above = 0
+                self._below_since_fire += 1
+                if self._below_since_fire >= self.config.rearm_ticks:
+                    self._needs_rearm = False
+                    self._below_since_fire = 0
+                    self._consecutive_above = 0
             else:
-                self._consecutive_above += 1
+                self._below_since_fire = 0
             return False
 
         if self.config.mode == "persistence":
@@ -57,6 +72,8 @@ class AlertPolicy:
             if self._consecutive_above >= self.config.persistence_ticks:
                 self._cooldown_remaining = self.config.cooldown_ticks
                 self._consecutive_above = 0
+                self._needs_rearm = True
+                self._below_since_fire = 0
                 return True
             return False
 
@@ -64,6 +81,8 @@ class AlertPolicy:
             count_above = sum(self._recent)
             if count_above >= self.config.confirmation_k:
                 self._cooldown_remaining = self.config.cooldown_ticks
+                self._needs_rearm = True
+                self._below_since_fire = 0
                 self._recent.clear()
                 return True
             return False

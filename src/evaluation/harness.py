@@ -479,14 +479,15 @@ def run_evaluation(
     steps_per_run: int = 120,
     target_fpr: float = 0.05,
     base_seed: int = 9999,
-    generator: str = "synthetic",
+    generator: str = "legacy",
 ) -> tuple[EvaluationReport, pd.DataFrame]:
     """End-to-end evaluation: generate data, score, calibrate, compute metrics.
 
     Args:
-        generator: ``"synthetic"`` (default) uses the new long-horizon
-            generator so training/eval distributions match.
-            ``"legacy"`` uses the old ``PipelineTelemetrySimulator``.
+        generator: ``"legacy"`` (default) uses the ``PipelineTelemetrySimulator``,
+            which matches the dashboard live simulator distribution.
+            ``"synthetic"`` uses the new long-horizon generator so training/eval
+            distributions match (only useful when models are trained on that data).
 
     Returns (report, detailed_scores_df).
     """

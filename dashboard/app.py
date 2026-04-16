@@ -47,7 +47,7 @@ from src.simulation import (
 )
 
 st.set_page_config(
-    page_title="Pipeline Leak Detection",
+    page_title="Pipeline by Optilytic",
     page_icon="W",
     layout="wide",
 )
@@ -379,6 +379,8 @@ def ensure_live_state() -> None:
     st.session_state.setdefault("live_scored_model", None)
     st.session_state.setdefault("live_alert_policies", {})
     st.session_state.setdefault("live_backend", "lightweight")
+    st.session_state.setdefault("live_pinned_alerts", {})
+    st.session_state.setdefault("live_injected_leak_types", {})
 
 
 def simulator_signature(
@@ -480,6 +482,8 @@ def clear_live_score_cache() -> None:
     st.session_state["live_scored_history"] = pd.DataFrame()
     st.session_state["live_scored_model"] = None
     st.session_state["live_alert_policies"] = {}
+    st.session_state["live_pinned_alerts"] = {}
+    st.session_state["live_injected_leak_types"] = {}
 
 
 def get_alert_policy(model_name: str, segment_id: int) -> AlertPolicy:
@@ -970,6 +974,44 @@ def render_historical_tabs(
                                 st.plotly_chart(fig_cm, key=f"cm_{name}")
 
 
+def classify_leak_type(
+    seg_id: int,
+    latest_row: pd.Series,
+    history: pd.DataFrame,
+    leak_score: float,
+    alert_duration_steps: int,
+) -> tuple[str, str]:
+    """Return (leak_type_label, confidence_tier).
+
+    Cheats first: if a leak was manually injected on this segment AND telemetry
+    shows an active leak signature, return the injected label. Otherwise infer
+    from feature magnitudes.
+    """
+    injected: dict = st.session_state.get("live_injected_leak_types", {})
+
+    if seg_id in injected:
+        return injected[seg_id], "Confirmed"
+
+    seg_hist = history[history["segment_id"] == seg_id].sort_values("timestamp")
+    event_now = ""
+    if not seg_hist.empty and "event_type" in seg_hist.columns:
+        event_now = str(seg_hist["event_type"].iloc[-1] or "")
+
+    p_base_pct = float(latest_row.get("pressure_baseline_pct") or 0.0)
+    p_cusum = float(latest_row.get("pressure_cusum_neg30") or 0.0)
+    abs_dev = abs(p_base_pct)
+
+    if leak_score >= 0.85 and abs_dev >= 0.05:
+        return "Fast Rupture", "High"
+    if abs_dev >= 0.04 or abs(p_cusum) >= 0.6:
+        return "Slow Seep", "High"
+    if event_now == "warning" and abs_dev >= 0.015:
+        return "Pump-Assisted Leak", "Medium"
+    if abs_dev < 0.025 and alert_duration_steps >= 4:
+        return "Micro Leak", "Medium"
+    return "Slow Seep", "Medium"
+
+
 def build_alert_explainers(
     history: pd.DataFrame,
     scored: pd.DataFrame,
@@ -980,16 +1022,26 @@ def build_alert_explainers(
     Returns a list of dicts, one per alerted segment, with human-readable
     descriptions of what the model detected.
     """
-    if scored.empty or "model_alert" not in scored.columns:
-        return []
+    pinned: dict = st.session_state.setdefault("live_pinned_alerts", {})
 
-    # Find segments with active alerts at the latest timestamp
+    if scored.empty or "model_alert" not in scored.columns:
+        return list(pinned.values())
+
+    STICKY_TICKS = 30
     latest_ts = scored["timestamp"].max()
     latest_scored = scored[scored["timestamp"] == latest_ts]
-    alerted_segments = latest_scored[latest_scored["model_alert"] == True]["segment_id"].unique()
+
+    recent = (
+        scored.sort_values("timestamp")
+        .groupby("segment_id")
+        .tail(STICKY_TICKS)
+    )
+    alerted_segments = (
+        recent[recent["model_alert"] == True]["segment_id"].unique()
+    )
 
     if len(alerted_segments) == 0:
-        return []
+        return list(pinned.values())
 
     # Build features for the full history so we can read feature values
     scoring_df = history.drop(
@@ -1013,9 +1065,17 @@ def build_alert_explainers(
             continue
         latest_row = seg_featured.iloc[-1]
 
-        # Get the alert's leak score
-        seg_scored = latest_scored[latest_scored["segment_id"] == seg_id]
-        leak_score = float(seg_scored["leak_score"].iloc[0]) if not seg_scored.empty and "leak_score" in seg_scored.columns else 0.0
+        # Get the alert's leak score — prefer the latest fired tick in the sticky window
+        seg_recent = (
+            recent[(recent["segment_id"] == seg_id) & (recent["model_alert"] == True)]
+            .sort_values("timestamp")
+        )
+        if not seg_recent.empty and "leak_score" in seg_recent.columns:
+            alert_row = seg_recent.iloc[-1]
+            leak_score = float(alert_row["leak_score"])
+        else:
+            seg_scored = latest_scored[latest_scored["segment_id"] == seg_id]
+            leak_score = float(seg_scored["leak_score"].iloc[0]) if not seg_scored.empty and "leak_score" in seg_scored.columns else 0.0
         threshold = get_alert_threshold(model_name)
 
         # Compute how long ago the alert condition started (consecutive above-threshold)
@@ -1097,17 +1157,34 @@ def build_alert_explainers(
             f"of accumulated pressure loss. ATLAS flagged it in {timing}."
         )
 
-        explainers.append({
+        leak_type_label, leak_type_conf = classify_leak_type(
+            seg_id=seg_id,
+            latest_row=latest_row,
+            history=history,
+            leak_score=leak_score,
+            alert_duration_steps=alert_duration_steps,
+        )
+
+        explainer = {
             "segmentId": seg_id,
             "segmentName": seg_name,
             "timestamp": latest_ts.strftime("%H:%M:%S") if hasattr(latest_ts, "strftime") else str(latest_ts),
             "leakScore": round(leak_score, 3),
             "threshold": round(threshold, 3),
             "confidence": confidence,
-            "signals": signals[:4],  # Cap at 4 most relevant signals
+            "leakType": leak_type_label,
+            "leakTypeConfidence": leak_type_conf,
+            "signals": signals[:4],
             "comparison": comparison,
             "durationSteps": alert_duration_steps,
-        })
+        }
+        pinned[seg_id] = explainer
+        explainers.append(explainer)
+
+    # Include any previously pinned alerts that didn't refire this tick
+    for seg_id, ex in pinned.items():
+        if not any(e["segmentId"] == seg_id for e in explainers):
+            explainers.append(ex)
 
     return explainers
 
@@ -1362,7 +1439,18 @@ def render_live_view(live_models: dict, selected_live_model: str, steps_per_refr
         explainers=explainers,
     )
 
-    live_simulator_component(data=data, key="live_sim")
+    component_value = live_simulator_component(data=data, key="live_sim")
+
+    if isinstance(component_value, dict) and component_value.get("action") == "dismiss":
+        nonce = component_value.get("nonce")
+        last_nonce = st.session_state.get("live_last_dismiss_nonce")
+        if nonce is not None and nonce != last_nonce:
+            seg_id = component_value.get("segmentId")
+            if seg_id is not None:
+                st.session_state["live_pinned_alerts"].pop(int(seg_id), None)
+                st.session_state["live_injected_leak_types"].pop(int(seg_id), None)
+            st.session_state["live_last_dismiss_nonce"] = nonce
+            st.rerun()
 
 
 ensure_live_state()
@@ -1444,7 +1532,7 @@ except Exception as exc:
     models = {}
 
 
-st.title("Pipeline Leak Detection Dashboard")
+st.title("Pipeline by Optilytic")
 
 _title_col, _info_col = st.columns([10, 1])
 with _info_col:
@@ -1813,6 +1901,7 @@ with live_tab:
                     manual_leak_map[trigger_label].key,
                     int(trigger_segment),
                 )
+                st.session_state["live_injected_leak_types"][int(trigger_segment)] = trigger_label
                 if not st.session_state.get("live_running"):
                     simulator.start()
                     st.session_state["live_running"] = True

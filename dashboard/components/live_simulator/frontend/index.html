@@ -263,10 +263,62 @@ details > div {
     font-weight: 600;
 }
 
+.explainer-close {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    margin-left: 12px;
+    transition: background 0.15s;
+}
+.explainer-close:hover {
+    background: var(--red);
+    border-color: var(--red);
+}
+
 .explainer-subtitle {
     font-size: 13px;
     color: #ccc;
     margin-bottom: 14px;
+}
+
+.explainer-type-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.explainer-type-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.explainer-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: #fff;
+}
+.explainer-type-badge.type-fast-rupture { background: rgba(255,76,76,0.18); border-color: var(--red); color: #ff8a8a; }
+.explainer-type-badge.type-slow-seep    { background: rgba(255,153,0,0.18);  border-color: #ff9900;  color: #ffc266; }
+.explainer-type-badge.type-micro-leak   { background: rgba(255,221,0,0.14);  border-color: #ffd23f;  color: #ffe680; }
+.explainer-type-badge.type-pump-assisted-leak { background: rgba(0,180,216,0.18); border-color: #00b4d8; color: #7fdfff; }
+.explainer-type-conf {
+    font-size: 11px;
+    color: var(--text-muted);
 }
 
 .explainer-signals {
@@ -730,13 +782,27 @@ function renderExplainers(data) {
         var ex = items[i];
         var confClass = "explainer-confidence-" + (ex.confidence || "low").toLowerCase();
 
-        h += '<div class="explainer-card">';
+        h += '<div class="explainer-card" data-segment-id="' + esc(ex.segmentId) + '">';
         h += '<div class="explainer-header">';
         h += '<div class="explainer-title">\uD83D\uDD34 LEAK DETECTED \u2014 ' + esc(ex.segmentName) + '</div>';
+        h += '<div style="display:flex;align-items:center;gap:6px;">';
         h += '<div class="explainer-time">' + esc(ex.timestamp) + '</div>';
+        h += '<button class="explainer-close" data-dismiss-id="' + esc(ex.segmentId) + '" title="Dismiss">\u2715</button>';
+        h += '</div>';
         h += '</div>';
 
         h += '<div class="explainer-subtitle">ATLAS flagged a sustained pressure anomaly on ' + esc(ex.segmentName) + '.</div>';
+
+        if (ex.leakType) {
+            var typeSlug = String(ex.leakType).toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
+            h += '<div class="explainer-type-row">';
+            h += '<span class="explainer-type-label">Predicted type</span>';
+            h += '<span class="explainer-type-badge type-' + typeSlug + '">' + esc(ex.leakType) + '</span>';
+            if (ex.leakTypeConfidence) {
+                h += '<span class="explainer-type-conf">(' + esc(ex.leakTypeConfidence) + ')</span>';
+            }
+            h += '</div>';
+        }
 
         // Signals
         var sigs = ex.signals || [];
@@ -764,6 +830,17 @@ function renderExplainers(data) {
         h += '</div>';
     }
     el.innerHTML = h;
+
+    var closeBtns = el.querySelectorAll(".explainer-close");
+    for (var b = 0; b < closeBtns.length; b++) {
+        closeBtns[b].addEventListener("click", function(evt) {
+            var sid = evt.currentTarget.getAttribute("data-dismiss-id");
+            sendMsg("streamlit:setComponentValue", {
+                value: { action: "dismiss", segmentId: Number(sid), nonce: Date.now() },
+                dataType: "json"
+            });
+        });
+    }
 }
 
 /* ================================================================
