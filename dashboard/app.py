@@ -502,19 +502,53 @@ def get_alert_policy(model_name: str, segment_id: int) -> AlertPolicy:
     return policies[key]
 
 
-def apply_alert_policies(scored: pd.DataFrame, model_name: str) -> pd.DataFrame:
-    """Add 'model_alert' column by feeding each segment's scores through AlertPolicy."""
+FAULT_SEVERITY_THRESHOLD = 0.55  # segment goes "red" in _segment_health_color
+MICRO_LEAK_SEVERITY_FLOOR = 0.03  # micro leaks never climb past warning tier
+
+
+def apply_alert_policies(scored: pd.DataFrame, model_name: str, history: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Add 'model_alert' column by feeding each segment's scores through AlertPolicy.
+
+    When history provides leak_severity, scores below the fault threshold are
+    fed into the policy as 0 so sub-fault blips never consume the fire/cooldown
+    window. This lets the first genuine fault trigger the alert cleanly.
+    """
     if scored.empty or "leak_score" not in scored.columns:
         return scored
 
     scored = scored.sort_values(["segment_id", "timestamp"]).copy()
     scored["model_alert"] = False
 
+    sev_map: dict[tuple, float] = {}
+    leak_active_map: dict[tuple, bool] = {}
+    if history is not None and not history.empty and "leak_severity" in history.columns:
+        cols = ["segment_id", "timestamp", "leak_severity"]
+        if "scenario_context" in history.columns:
+            cols.append("scenario_context")
+        sev_rows = history[cols].dropna(subset=["segment_id", "timestamp"])
+        for r in sev_rows.itertuples(index=False):
+            key = (int(r.segment_id), r.timestamp)
+            sev_map[key] = float(r.leak_severity or 0.0)
+            ctx = str(getattr(r, "scenario_context", "") or "").lower()
+            leak_active_map[key] = "leak" in ctx
+
     for segment_id in scored["segment_id"].unique():
         policy = get_alert_policy(model_name, int(segment_id))
         mask = scored["segment_id"] == segment_id
-        segment_scores = scored.loc[mask, "leak_score"]
-        alerts = [policy.update(float(s)) for s in segment_scores]
+        seg_view = scored.loc[mask, ["timestamp", "leak_score"]]
+        alerts = []
+        for ts, score in zip(seg_view["timestamp"], seg_view["leak_score"]):
+            key = (int(segment_id), ts)
+            sev = sev_map.get(key)
+            leak_active = leak_active_map.get(key, False)
+            if sev is None:
+                effective = float(score)
+            elif leak_active:
+                # Leak scenario is running — trust score even for low-severity micro leaks.
+                effective = float(score) if sev >= MICRO_LEAK_SEVERITY_FLOOR else 0.0
+            else:
+                effective = float(score) if sev >= FAULT_SEVERITY_THRESHOLD else 0.0
+            alerts.append(policy.update(effective))
         scored.loc[mask, "model_alert"] = alerts
 
     return scored
@@ -604,7 +638,7 @@ def score_live_history_incremental(
         for key in [k for k in policies if k[0] == model_name]:
             del policies[key]
         _, rescored = score_live_history(history, model)
-        rescored = apply_alert_policies(rescored, model_name)
+        rescored = apply_alert_policies(rescored, model_name, history=history)
         st.session_state["live_scored_history"] = rescored.copy()
         st.session_state["live_scored_model"] = model_name
         return rescored
@@ -662,9 +696,27 @@ def score_live_history_incremental(
             if "leak_score" in scored_new.columns:
                 policy = get_alert_policy(model_name, int(segment_id))
                 scored_new = scored_new.copy()
-                scored_new["model_alert"] = [
-                    policy.update(float(s)) for s in scored_new["leak_score"]
-                ]
+                sev_lookup: dict = {}
+                leak_active_lookup: dict = {}
+                if "leak_severity" in segment_new.columns:
+                    ctx_col = "scenario_context" if "scenario_context" in segment_new.columns else None
+                    cols = ["timestamp", "leak_severity"] + ([ctx_col] if ctx_col else [])
+                    for r in segment_new[cols].itertuples(index=False):
+                        sev_lookup[r.timestamp] = float(r.leak_severity or 0.0)
+                        if ctx_col:
+                            leak_active_lookup[r.timestamp] = "leak" in str(getattr(r, ctx_col) or "").lower()
+                alerts = []
+                for ts, s in zip(scored_new["timestamp"], scored_new["leak_score"]):
+                    sev = sev_lookup.get(ts) if sev_lookup else None
+                    leak_active = leak_active_lookup.get(ts, False)
+                    if sev is None:
+                        effective = float(s)
+                    elif leak_active:
+                        effective = float(s) if sev >= MICRO_LEAK_SEVERITY_FLOOR else 0.0
+                    else:
+                        effective = float(s) if sev >= FAULT_SEVERITY_THRESHOLD else 0.0
+                    alerts.append(policy.update(effective))
+                scored_new["model_alert"] = alerts
             scored_parts.append(scored_new)
 
     updated_scores = (
@@ -680,7 +732,7 @@ def score_live_history_incremental(
         for key in [k for k in policies if k[0] == model_name]:
             del policies[key]
         _, updated_scores = score_live_history(history, model)
-        updated_scores = apply_alert_policies(updated_scores, model_name)
+        updated_scores = apply_alert_policies(updated_scores, model_name, history=history)
 
     st.session_state["live_scored_history"] = updated_scores.copy()
     st.session_state["live_scored_model"] = model_name
@@ -1854,6 +1906,7 @@ with live_tab:
                         manual_leak_map[t_label].key,
                         int(t_segment),
                     )
+                    st.session_state["live_injected_leak_types"][int(t_segment)] = t_label
                     if not st.session_state.get("live_running"):
                         simulator.start()
                         st.session_state["live_running"] = True
